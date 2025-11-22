@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import EnergyChatbot from './EnergyChatbot';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, AreaChart, Area, ComposedChart
+  Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ComposedChart, Area
 } from 'recharts';
 import {
   Upload, Activity, AlertTriangle, Zap, CheckCircle,
-  BrainCircuit, Database, Search, File as FileIcon
+  BrainCircuit, Database
 } from 'lucide-react';
 import { 
   uploadReadings, getAvailableYears, analyzeEnergy, AnalysisResult, 
@@ -341,86 +342,93 @@ const EnergyDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Panel Principal de Resultados */}
+        {/* Panel Principal de Resultados y Chatbot */}
         <div className="md:col-span-8 space-y-6">
-            {!result ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              {/* Resultados de análisis */}
+              {!result ? (
                 <div className="h-full min-h-[400px] bg-white rounded-xl border border-slate-200 flex flex-col items-center justify-center text-slate-400">
-                    <Activity className="w-16 h-16 mb-4 opacity-20" />
-                    <p>Esperando análisis...</p>
+                  <Activity className="w-16 h-16 mb-4 opacity-20" />
+                  <p>Esperando análisis...</p>
                 </div>
-            ) : (
+              ) : (
                 <>
-                    {/* Gráfica */}
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <div className="flex justify-between items-center mb-6">
-                            <div>
-                                <h3 className="font-bold text-lg text-slate-800">Curva de Carga: {result.day_name}</h3>
-                                <p className="text-xs text-slate-400">Comparativa Real vs Esperado (Base: {selectedBaseYear})</p>
-                            </div>
-                            <div className="flex gap-4 text-xs">
-                                <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-500/20 border border-blue-500 rounded"></div> Real</div>
-                                <div className="flex items-center gap-1"><div className="w-3 h-1 bg-slate-400 border-t border-slate-400 border-dashed"></div> Esperado</div>
-                            </div>
-                        </div>
-                        <div className="h-[320px] w-full">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <ComposedChart data={result.chart_data}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis dataKey="time_str" tick={{fontSize: 10, fill:'#94a3b8'}} interval={8} />
-                                    <YAxis tick={{fontSize: 10, fill:'#94a3b8'}} />
-                                    <Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
-                                    <Line type="monotone" dataKey="mean" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Esperado" />
-                                    <Area type="monotone" dataKey="value" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.1} strokeWidth={2} dot={false} name="Real" />
-                                </ComposedChart>
-                            </ResponsiveContainer>
-                        </div>
+                  {/* Gráfica */}
+                  <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <div className="flex justify-between items-center mb-6">
+                      <div>
+                        <h3 className="font-bold text-lg text-slate-800">Curva de Carga: {result.day_name}</h3>
+                        <p className="text-xs text-slate-400">Comparativa Real vs Esperado (Base: {selectedBaseYear})</p>
+                      </div>
+                      <div className="flex gap-4 text-xs">
+                        <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-500/20 border border-blue-500 rounded"></div> Real</div>
+                        <div className="flex items-center gap-1"><div className="w-3 h-1 bg-slate-400 border-t border-slate-400 border-dashed"></div> Esperado</div>
+                      </div>
                     </div>
-
-                    {/* Panel IA */}
-                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                        <div className="bg-slate-900 p-4 flex justify-between items-center">
-                            <div className="flex items-center gap-2 text-white font-medium">
-                                <BrainCircuit className="w-5 h-5 text-indigo-400" />
-                                Diagnóstico Observer
-                            </div>
-                            <StatusBadge status={result.analysis.estado_general} />
-                        </div>
-                        <div className="p-6 space-y-5">
-                            <div>
-                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Resumen Ejecutivo</h4>
-                                <p className="text-slate-700 leading-relaxed text-sm">{result.analysis.resumen}</p>
-                            </div>
-                            
-                            <div className="grid md:grid-cols-2 gap-4">
-                                <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
-                                    <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Hábitos Detectados</h4>
-                                    <p className="text-sm text-slate-600">{result.analysis.habitos}</p>
-                                </div>
-                                <div className="bg-red-50 p-4 rounded-lg border border-red-100">
-                                    <h4 className="text-xs font-bold text-red-700 uppercase mb-2 flex items-center gap-2">
-                                        <AlertTriangle className="w-3 h-3"/> Anomalías
-                                    </h4>
-                                    {result.analysis.anomalias && result.analysis.anomalias.length > 0 ? (
-                                        <ul className="list-disc list-inside text-sm text-red-600 space-y-1">
-                                            {result.analysis.anomalias.map((a: any, i) => <li key={i}>{a.periodo}: {a.descripcion}</li>)}
-                                        </ul>
-                                    ) : (
-                                        <p className="text-sm text-green-600 flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Ninguna crítica.</p>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100 flex gap-3">
-                                <div className="shrink-0 mt-1"><Zap className="w-4 h-4 text-indigo-600"/></div>
-                                <div>
-                                    <h4 className="text-xs font-bold text-indigo-800 uppercase mb-1">Recomendación Operativa</h4>
-                                    <p className="text-sm text-indigo-900 font-medium italic">"{result.analysis.recomendacion}"</p>
-                                </div>
-                            </div>
-                        </div>
+                    <div className="h-[320px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={result.chart_data}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis dataKey="time_str" tick={{fontSize: 10, fill:'#94a3b8'}} interval={8} />
+                          <YAxis tick={{fontSize: 10, fill:'#94a3b8'}} />
+                          <Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
+                          <Line type="monotone" dataKey="mean" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Esperado" />
+                          <Area type="monotone" dataKey="value" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.1} strokeWidth={2} dot={false} name="Real" />
+                        </ComposedChart>
+                      </ResponsiveContainer>
                     </div>
+                  </div>
+
+                  {/* Panel IA */}
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6">
+                    <div className="bg-slate-900 p-4 flex justify-between items-center">
+                      <div className="flex items-center gap-2 text-white font-medium">
+                        <BrainCircuit className="w-5 h-5 text-indigo-400" />
+                        Diagnóstico Observer
+                      </div>
+                      <StatusBadge status={result.analysis.estado_general} />
+                    </div>
+                    <div className="p-6 space-y-5">
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Resumen Ejecutivo</h4>
+                        <p className="text-slate-700 leading-relaxed text-sm">{result.analysis.resumen}</p>
+                      </div>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
+                          <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Hábitos Detectados</h4>
+                          <p className="text-sm text-slate-600">{result.analysis.habitos}</p>
+                        </div>
+                        <div className="bg-red-50 p-4 rounded-lg border border-red-100">
+                          <h4 className="text-xs font-bold text-red-700 uppercase mb-2 flex items-center gap-2">
+                            <AlertTriangle className="w-3 h-3"/> Anomalías
+                          </h4>
+                          {result.analysis.anomalias && result.analysis.anomalias.length > 0 ? (
+                            <ul className="list-disc list-inside text-sm text-red-600 space-y-1">
+                              {result.analysis.anomalias.map((a: any, i) => <li key={i}>{a.periodo}: {a.descripcion}</li>)}
+                            </ul>
+                          ) : (
+                            <p className="text-sm text-green-600 flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Ninguna crítica.</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100 flex gap-3">
+                        <div className="shrink-0 mt-1"><Zap className="w-4 h-4 text-indigo-600"/></div>
+                        <div>
+                          <h4 className="text-xs font-bold text-indigo-800 uppercase mb-1">Recomendación Operativa</h4>
+                          <p className="text-sm text-indigo-900 font-medium italic">"{result.analysis.recomendacion}"</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </>
-            )}
+              )}
+            </div>
+            <div>
+              {/* Chatbot IA Energético */}
+              <EnergyChatbot context={{ device_id: deviceId, fecha: targetDate, base_year: selectedBaseYear }} />
+            </div>
+          </div>
         </div>
       </div>
     </div>

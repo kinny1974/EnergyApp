@@ -1,3 +1,40 @@
+// Tipos para el análisis de outliers
+export interface OutlierRequest {
+  base_year: number;
+  start_date: string; // YYYY-MM-DD
+  end_date: string;   // YYYY-MM-DD
+  threshold: number;
+}
+
+export interface OutlierResult {
+  device_id: string;
+  fecha: string;
+  max_deviation: number;
+  chart_data: ChartDataPoint[];
+  medidor_info: MedidorInfo;
+}
+
+export interface OutlierResponse {
+  outliers: OutlierResult[];
+}
+
+/**
+ * Busca medidores con desviaciones mayores al umbral en el rango de fechas dado.
+ */
+export const analyzeOutliers = async (payload: OutlierRequest): Promise<OutlierResponse> => {
+  const response = await fetch(`${BASE_URL}/analyze-outliers`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error en el análisis de outliers');
+  }
+  return response.json();
+};
 // Definición de Tipos para las Respuestas del Backend
 
 export interface UploadResponse {
