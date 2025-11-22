@@ -322,3 +322,62 @@ class EnergyService(Subject):
             }
             for m in medidores
         ]
+
+    def analyze_demand_growth(self, current_period_start: str, current_period_end: str,
+                            previous_period_start: str, previous_period_end: str,
+                            min_growth_percentage: float = 0.0):
+        """
+        Analiza el crecimiento de demanda entre dos periodos comparables.
+        Retorna medidores ordenados por porcentaje de crecimiento.
+        """
+        from datetime import datetime, timedelta
+        
+        # Obtener todos los medidores activos
+        medidores = self.repo.get_active_medidores()
+        growth_results = []
+        
+        for medidor in medidores:
+            try:
+                # Obtener energía total del periodo actual
+                current_energy = self.repo.get_total_energy_in_period(
+                    device_id=medidor.deviceid,
+                    start_date=current_period_start,
+                    end_date=current_period_end
+                )
+                
+                # Obtener energía total del periodo anterior
+                previous_energy = self.repo.get_total_energy_in_period(
+                    device_id=medidor.deviceid,
+                    start_date=previous_period_start,
+                    end_date=previous_period_end
+                )
+                
+                if current_energy and previous_energy:
+                    current_kwh = current_energy['total_energy_kwh']
+                    previous_kwh = previous_energy['total_energy_kwh']
+                    
+                    # Calcular crecimiento porcentual
+                    if previous_kwh > 0:
+                        growth_percentage = ((current_kwh - previous_kwh) / previous_kwh) * 100
+                        
+                        if growth_percentage >= min_growth_percentage:
+                            growth_results.append({
+                                'device_id': medidor.deviceid,
+                                'description': medidor.description,
+                                'customerid': medidor.customerid,
+                                'current_period_energy': current_kwh,
+                                'previous_period_energy': previous_kwh,
+                                'growth_kwh': current_kwh - previous_kwh,
+                                'growth_percentage': growth_percentage,
+                                'current_period': f"{current_period_start} a {current_period_end}",
+                                'previous_period': f"{previous_period_start} a {previous_period_end}"
+                            })
+                            
+            except Exception as e:
+                # Continuar con el siguiente medidor si hay error
+                continue
+        
+        # Ordenar por porcentaje de crecimiento descendente
+        growth_results.sort(key=lambda x: x['growth_percentage'], reverse=True)
+        
+        return growth_results

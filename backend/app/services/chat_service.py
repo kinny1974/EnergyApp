@@ -12,36 +12,56 @@ class ChatService:
     def ask_gemini(self, message: str, context: dict = None) -> str:
         """
         Envía un mensaje a Gemini, agregando contexto eléctrico si se provee.
+        Usa un sistema híbrido: primero regex para casos claros, luego Gemini para clasificación.
         """
         try:
             # DEBUG: Agregar logging para ver qué está detectando
             print(f"[DEBUG] Mensaje recibido: {message}")
             
+            # Detectar si la pregunta es sobre crecimiento de demanda (primero porque puede contener palabras de otras consultas)
+            if self._is_demand_growth_query(message):
+                print(f"[DEBUG] Detectado como consulta de crecimiento de demanda (regex)")
+                return self._handle_demand_growth_query(message)
+            
             # Detectar si la pregunta es sobre búsqueda de outliers/desviaciones
             if self._is_outlier_query(message):
-                print(f"[DEBUG] Detectado como consulta de outliers")
+                print(f"[DEBUG] Detectado como consulta de outliers (regex)")
                 return self._handle_outlier_query(message)
             
             # Detectar si la pregunta es sobre máxima potencia
             if self._is_max_power_query(message):
-                print(f"[DEBUG] Detectado como consulta de máxima potencia")
+                print(f"[DEBUG] Detectado como consulta de máxima potencia (regex)")
                 return self._handle_max_power_query(message)
             
             # Detectar si la pregunta es sobre energía total
             if self._is_total_energy_query(message):
-                print(f"[DEBUG] Detectado como consulta de energía total")
+                print(f"[DEBUG] Detectado como consulta de energía total (regex)")
                 return self._handle_total_energy_query(message)
             
-            # Para preguntas generales, usar Gemini normalmente
-            print(f"[DEBUG] No detectado como consulta específica, usando Gemini")
-            prompt = self._build_prompt(message, context)
+            # Si no se detectó con regex, usar Gemini para clasificar la intención
+            print(f"[DEBUG] No detectado por regex, clasificando con Gemini")
+            intent = self._classify_intent_with_gemini(message)
+            print(f"[DEBUG] Intención clasificada por Gemini: {intent}")
             
-            client = genai.Client(api_key=self.api_key)
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt
-            )
-            return response.text
+            # Procesar según la intención clasificada
+            if intent == "demand_growth":
+                return self._handle_demand_growth_query(message)
+            elif intent == "outlier":
+                return self._handle_outlier_query(message)
+            elif intent == "max_power":
+                return self._handle_max_power_query(message)
+            elif intent == "total_energy":
+                return self._handle_total_energy_query(message)
+            else:
+                # Para preguntas generales, usar Gemini normalmente
+                prompt = self._build_prompt(message, context)
+                
+                client = genai.Client(api_key=self.api_key)
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt
+                )
+                return response.text
         except Exception as e:
             return f"Error consultando Gemini: {str(e)}"
 
@@ -106,6 +126,36 @@ class ChatService:
         ]
         message_lower = message.lower()
         return any(re.search(pattern, message_lower) for pattern in patterns)
+
+    def _is_demand_growth_query(self, message: str) -> bool:
+        """Detecta si la pregunta es sobre crecimiento/comparación de demanda entre periodos."""
+        patterns = [
+            r"medidores.*mayor\s+crecimiento",
+            r"crecimiento\s+de\s+la\s+demanda",
+            r"comparación.*demanda.*semana",
+            r"comparar.*consumo.*semana",
+            r"aumento.*demanda.*semana",
+            r"incremento.*consumo.*semana",
+            r"evolución.*demanda.*semana",
+            r"variación.*demanda.*semana",
+            r"cambio.*demanda.*semana",
+            r"análisis.*comparativo.*demanda",
+            # Patrones más específicos para la consulta del usuario
+            r"determinar.*medidores.*mayor\s+crecimiento.*demanda",
+            r"primera\s+semana.*noviembre.*comparación.*primera\s+semana.*mes\s+anterior",
+            # Patrones más flexibles
+            r"mayor\s+crecimiento.*demanda.*primera\s+semana",
+            r"crecimiento.*demanda.*semana.*comparación",
+            r"comparar.*primera\s+semana",
+            r"primera\s+semana.*\w+.*comparación.*primera\s+semana",
+            r"medidores.*crecimiento.*semana.*\w+.*mes\s+anterior"
+        ]
+        message_lower = message.lower()
+        is_match = any(re.search(pattern, message_lower) for pattern in patterns)
+        print(f"[DEBUG] _is_demand_growth_query: '{message_lower}' -> {is_match}")
+        if is_match:
+            print(f"[DEBUG] Patrón coincidente encontrado para crecimiento de demanda")
+        return is_match
 
     def _handle_outlier_query(self, message: str) -> str:
         """Procesa consultas sobre búsqueda de outliers usando EnergyService."""
@@ -243,19 +293,40 @@ class ChatService:
         return params
 
     def _format_max_power_response(self, result, params):
-        """Formatea la respuesta de máxima potencia."""
-        response = "⚡ **Análisis de Máxima Potencia Completado**\n\n"
-        response += f"📊 **Medidor:** {result['device_id']}\n"
-        response += f"📅 **Periodo:** {result['start_date']} → {result['end_date']}\n\n"
+        """Formatea la respuesta de máxima potencia de manera más humana y natural."""
+        # Construir respuesta más humana
+        response = f"¡Listo! He analizado la máxima potencia del medidor **{result['device_id']}**.\n\n"
         
-        response += f"🔥 **Potencia Máxima:** {result['max_power_kw']:.2f} kW\n"
-        response += f"📈 **Energía máxima (kWhd):** {result['max_kwhd']:.4f} kWh\n"
+        response += f"📅 **Periodo analizado:** Del {result['start_date']} al {result['end_date']}\n\n"
+        
+        response += f"**Resultados obtenidos:**\n"
+        response += f"• **Potencia máxima registrada:** {result['max_power_kw']:.1f} kW\n"
+        response += f"• **Energía en el momento del pico:** {result['max_kwhd']:.3f} kWh\n"
         
         if result['datetime']:
-            fecha_hora = result['datetime'].strftime("%Y-%m-%d %H:%M:%S")
-            response += f"🕐 **Momento del pico:** {fecha_hora}\n"
+            from datetime import datetime
+            fecha_hora = result['datetime']
+            if isinstance(fecha_hora, str):
+                fecha_hora = datetime.strptime(fecha_hora, "%Y-%m-%d %H:%M:%S")
+            
+            fecha_natural = fecha_hora.strftime("%d de %B de %Y a las %H:%M")
+            response += f"• **Momento del pico:** {fecha_natural}\n\n"
+        else:
+            response += "\n"
         
-        response += f"\n💡 **Nota:** Potencia calculada como kWhd/0.25 (lecturas cada 15 min)"
+        # Agregar contexto interpretativo sobre la potencia
+        if result['max_power_kw'] > 100:
+            power_context = "Esta es una potencia muy alta, típica de equipos industriales o grandes sistemas de climatización."
+        elif result['max_power_kw'] > 50:
+            power_context = "Esta potencia corresponde a equipos comerciales medianos o sistemas de bombeo importantes."
+        elif result['max_power_kw'] > 10:
+            power_context = "Este nivel de potencia es característico de comercios pequeños o residencias con varios equipos funcionando simultáneamente."
+        else:
+            power_context = "Esta potencia es moderada, similar al consumo de electrodomésticos comunes en una residencia."
+        
+        response += f"💡 **Interpretación:** {power_context}\n\n"
+        
+        response += "¿Necesitas que analice algún otro aspecto del consumo energético?"
         
         return response
 
@@ -537,21 +608,51 @@ class ChatService:
         return params
 
     def _format_total_energy_response(self, result, params):
-        """Formatea la respuesta de energía total."""
-        response = "🔋 **Análisis de Energía Total Completado**\n\n"
-        response += f"📊 **Medidor:** {result['device_id']}\n"
-        response += f"📅 **Periodo:** {result['start_date']} → {result['end_date']}\n"
-        response += f"⏰ **Duración:** {result['period_days']} días\n\n"
+        """Formatea la respuesta de energía total de manera más humana y natural."""
+        # Formatear fechas de manera más legible
+        start_date = result['start_date']
+        end_date = result['end_date']
+        period_days = result['period_days']
         
-        response += f"⚡ **Energía Total Consumida:** {result['total_energy_kwh']:.2f} kWh\n"
-        response += f"📈 **Potencia Promedio:** {result['average_power_kw']:.2f} kW\n"
-        response += f"📊 **Lecturas procesadas:** {result['reading_count']} registros\n"
+        # Convertir formato de fecha (YYYY-MM-DD) a algo más natural
+        def format_date_natural(date_str):
+            from datetime import datetime
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                     'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+            return f"{date_obj.day} de {months[date_obj.month-1]} de {date_obj.year}"
         
-        # Calcular estadísticas adicionales
+        start_natural = format_date_natural(start_date)
+        end_natural = format_date_natural(end_date)
+        
+        # Construir respuesta más humana
+        response = f"¡Perfecto! He calculado la demanda de energía para el medidor **{result['device_id']}**.\n\n"
+        
+        response += f"📅 **Periodo analizado:** Del {start_natural} al {end_natural} "
+        response += f"({period_days} días)\n\n"
+        
+        response += f"**Resultados obtenidos:**\n"
+        response += f"• **Energía total consumida:** {result['total_energy_kwh']:,.0f} kWh\n"
+        response += f"• **Potencia promedio:** {result['average_power_kw']:.1f} kW\n"
+        
+        # Calcular estadísticas adicionales con contexto
         daily_avg = result['total_energy_kwh'] / result['period_days']
-        response += f"📋 **Consumo diario promedio:** {daily_avg:.2f} kWh/día\n"
+        response += f"• **Consumo diario promedio:** {daily_avg:,.0f} kWh/día\n"
+        response += f"• **Lecturas procesadas:** {result['reading_count']:,} registros\n\n"
         
-        response += f"\n💡 **Nota:** Suma total de valores kWhd en el periodo especificado"
+        # Agregar contexto interpretativo
+        if result['total_energy_kwh'] > 10000:
+            energy_context = "Este es un consumo bastante elevado, típico de instalaciones industriales o comerciales grandes."
+        elif result['total_energy_kwh'] > 5000:
+            energy_context = "Este consumo corresponde a una instalación comercial mediana o industrial pequeña."
+        elif result['total_energy_kwh'] > 1000:
+            energy_context = "Este nivel de consumo es característico de comercios pequeños o residencias con alto consumo."
+        else:
+            energy_context = "Este es un consumo moderado, similar al de una residencia promedio."
+        
+        response += f"💡 **Interpretación:** {energy_context}\n\n"
+        
+        response += "¿Te gustaría que analice algún otro periodo o medidor?"
         
         return response
 
@@ -620,8 +721,56 @@ class ChatService:
         
         return response
 
+    def _classify_intent_with_gemini(self, message: str) -> str:
+        """Usa Gemini para clasificar la intención del mensaje en categorías específicas."""
+        try:
+            classification_prompt = f"""
+Analiza la siguiente consulta y clasifícala en una de estas categorías:
+
+- "demand_growth": Consultas sobre crecimiento/comparación de demanda entre periodos, como "medidores con mayor crecimiento", "comparación de semanas", "aumento de demanda"
+- "outlier": Consultas sobre búsqueda de outliers, desviaciones, anomalías, medidores que exceden umbrales
+- "max_power": Consultas sobre máxima potencia, potencia pico, máximo de potencia
+- "total_energy": Consultas sobre energía total, consumo total, suma de energía, demanda de energía
+- "general": Preguntas generales sobre conceptos eléctricos, eficiencia energética, o cualquier otra cosa
+
+Consulta: "{message}"
+
+Responde SOLO con una de estas palabras: demand_growth, outlier, max_power, total_energy, general
+"""
+            
+            client = genai.Client(api_key=self.api_key)
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=classification_prompt
+            )
+            
+            intent = response.text.strip().lower()
+            print(f"[DEBUG] Gemini clasificó la intención como: {intent}")
+            return intent
+            
+        except Exception as e:
+            print(f"[DEBUG] Error clasificando intención con Gemini: {e}")
+            return "general"
+
     def _build_prompt(self, message: str, context: dict = None) -> str:
-        base = "Actúa como un ingeniero electricista experto en análisis de demanda y eficiencia energética. Responde de forma clara, técnica y útil."
+        base = """Actúa como un ingeniero electricista experto en análisis de demanda y eficiencia energética. Responde de forma clara, técnica y útil.
+
+SERVICIOS DISPONIBLES (con endpoints implementados):
+- **Análisis de crecimiento de demanda**: Comparar consumo entre periodos (primera semana vs mes anterior, etc.)
+- **Búsqueda de outliers**: Medidores con desviaciones significativas (>X%) respecto a un año base
+- **Máxima potencia**: Potencia máxima registrada por un medidor en un periodo específico
+- **Energía total**: Consumo total de energía (kWh) de un medidor en un periodo
+- **Información de medidores**: Lista de medidores disponibles y sus datos
+
+SERVICIOS NO DISPONIBLES:
+- Predicción meteorológica
+- Análisis de facturas eléctricas
+- Recomendaciones de tecnologías eficientes
+- Cálculo de retorno de inversión
+- Optimización de consumo específica por equipo
+
+Si la pregunta está fuera del ámbito de los servicios disponibles, responde claramente indicando las limitaciones."""
+        
         if context:
             base += "\n\nContexto relevante:\n"
             for k, v in context.items():
@@ -629,3 +778,221 @@ class ChatService:
         base += f"\n\nPregunta del usuario: {message}\n"
         base += "Responde en español. Si la pregunta es sobre conceptos eléctricos, explica de forma sencilla y técnica."
         return base
+
+    def _handle_demand_growth_query(self, message: str) -> str:
+        """Procesa consultas sobre crecimiento de demanda usando EnergyService."""
+        if not self.energy_service:
+            return "Error: No tengo acceso al servicio de análisis energético para buscar datos reales."
+        
+        try:
+            # Extraer parámetros de la consulta
+            params = self._extract_demand_growth_params(message)
+            
+            if not all([params['current_start'], params['current_end'], params['previous_start'], params['previous_end']]):
+                return "Error: No pude extraer todos los parámetros necesarios. Por favor, especifica claramente los periodos a comparar (ej: 'primera semana de noviembre vs primera semana de octubre')."
+            
+            # Informar que se está procesando
+            print(f"Procesando consulta de crecimiento de demanda: {params}")
+            
+            # Ejecutar análisis de crecimiento de demanda
+            results = self.energy_service.analyze_demand_growth(
+                current_period_start=params['current_start'],
+                current_period_end=params['current_end'],
+                previous_period_start=params['previous_start'],
+                previous_period_end=params['previous_end'],
+                min_growth_percentage=params['min_growth']
+            )
+            
+            if not results:
+                return f"✅ **Análisis Completado**\n\nNo se encontraron medidores con crecimiento de demanda significativo en la comparación entre:\n- **Periodo actual:** {params['current_start']} a {params['current_end']}\n- **Periodo anterior:** {params['previous_start']} a {params['previous_end']}"
+            
+            # Formatear respuesta
+            return self._format_demand_growth_response(results, params)
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "timeout" in error_msg.lower():
+                return "❌ **Error de Timeout**\n\nLa consulta tardó demasiado tiempo. Intenta reducir el rango de fechas o contacta al administrador."
+            elif "database" in error_msg.lower():
+                return "❌ **Error de Base de Datos**\n\nNo se pudo conectar a la base de datos. Verifica que el servicio esté funcionando."
+            else:
+                return f"❌ **Error procesando la consulta:** {error_msg}"
+
+    def _extract_demand_growth_params(self, message: str):
+        """Extrae parámetros de consultas de crecimiento de demanda."""
+        params = {
+            'current_start': None,
+            'current_end': None,
+            'previous_start': None,
+            'previous_end': None,
+            'min_growth': 0.0
+        }
+        
+        # Función auxiliar para calcular primera semana del mes
+        def get_first_week_of_month(year: int, month: int):
+            """Calcula las fechas de la primera semana de un mes (lunes a domingo)."""
+            from datetime import datetime, timedelta
+            
+            # Primer día del mes
+            first_day = datetime(year, month, 1)
+            
+            # Encontrar el lunes de la primera semana
+            # Si el primer día no es lunes, retroceder hasta encontrar el lunes
+            first_monday = first_day
+            while first_monday.weekday() != 0:  # 0 es lunes
+                first_monday -= timedelta(days=1)
+            
+            # El domingo de la primera semana es 6 días después del lunes
+            first_sunday = first_monday + timedelta(days=6)
+            
+            # Si el domingo está en el mes siguiente, ajustar al último día del mes actual
+            if first_sunday.month != month:
+                # Último día del mes actual
+                if month == 12:
+                    last_day = datetime(year + 1, 1, 1) - timedelta(days=1)
+                else:
+                    last_day = datetime(year, month + 1, 1) - timedelta(days=1)
+                first_sunday = last_day
+            
+            return first_monday.strftime("%Y-%m-%d"), first_sunday.strftime("%Y-%m-%d")
+        
+        # Función auxiliar para detectar meses por nombre
+        def detect_month_by_name(text):
+            meses = {
+                'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
+                'mayo': 5, 'junio': 6, 'julio': 7, 'agosto': 8,
+                'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12
+            }
+            text_lower = text.lower()
+            for mes_nombre, mes_numero in meses.items():
+                if mes_nombre in text_lower:
+                    return mes_numero
+            return None
+        
+        # Detectar patrón "primera semana de [mes actual] vs primera semana del mes anterior" - versión más flexible
+        growth_patterns = [
+            # Patrones que incluyen "mayor crecimiento" y "demanda"
+            r'mayor\s+crecimiento.*?demanda.*?primera\s+semana\s+(?:de\s+)?(\w+).*?comparaci[oó]n.*?primera\s+semana\s+(?:de\s+)?(?:el\s+)?mes\s+anterior',
+            r'crecimiento.*?demanda.*?primera\s+semana\s+(?:de\s+)?(\w+).*?comparaci[oó]n.*?primera\s+semana\s+(?:de\s+)?(?:el\s+)?mes\s+anterior',
+            # Patrones que capturan la estructura con "el la"
+            r'(?:el\s+)?la\s+primera\s+semana\s+(?:de\s+)?(\w+).*?comparaci[oó]n.*?primera\s+semana\s+(?:de\s+)?(?:el\s+)?mes\s+anterior',
+            # Patrones generales
+            r'primera\s+semana\s+(?:de\s+)?(\w+).*?comparaci[oó]n.*?primera\s+semana\s+(?:de\s+)?(?:el\s+)?mes\s+anterior',
+            r'primera\s+semana\s+(?:de\s+)?(\w+).*?en\s+comparaci[oó]n.*?primera\s+semana\s+(?:de\s+)?(?:el\s+)?mes\s+anterior',
+            r'primera\s+semana\s+(?:de\s+)?(\w+).*?comparada.*?primera\s+semana\s+(?:de\s+)?(?:el\s+)?mes\s+anterior',
+            r'primera\s+semana\s+(?:de\s+)?(\w+).*?versus.*?primera\s+semana\s+(?:de\s+)?(?:el\s+)?mes\s+anterior',
+            r'primera\s+semana\s+(?:de\s+)?(\w+).*?vs.*?primera\s+semana\s+(?:de\s+)?(?:el\s+)?mes\s+anterior',
+            # Patrones más flexibles para variaciones comunes
+            r'primera\s+semana\s+(?:del?\s+)?(\w+).*?comparaci[oó]n.*?primera\s+semana\s+(?:del?\s+)?mes\s+anterior',
+            r'primera\s+semana\s+(?:del?\s+)?(\w+).*?en\s+comparaci[oó]n.*?primera\s+semana\s+(?:del?\s+)?mes\s+anterior',
+            r'primera\s+semana\s+(?:del?\s+)?(\w+).*?comparada.*?primera\s+semana\s+(?:del?\s+)?mes\s+anterior'
+        ]
+        
+        for pattern in growth_patterns:
+            growth_match = re.search(pattern, message, re.IGNORECASE)
+            if growth_match:
+                current_month_name = growth_match.group(1).lower()
+                print(f"[DEBUG] Patrón detectado: mes actual = '{current_month_name}'")
+                
+                current_month = detect_month_by_name(current_month_name)
+                print(f"[DEBUG] Mes detectado numérico: {current_month}")
+                
+                if current_month:
+                    # Determinar año (asumir año actual)
+                    from datetime import datetime
+                    current_year = datetime.now().year
+                    
+                    # Calcular mes anterior
+                    if current_month == 1:
+                        previous_month = 12
+                        previous_year = current_year - 1
+                    else:
+                        previous_month = current_month - 1
+                        previous_year = current_year
+                    
+                    # Calcular semanas
+                    current_start, current_end = get_first_week_of_month(current_year, current_month)
+                    previous_start, previous_end = get_first_week_of_month(previous_year, previous_month)
+                    
+                    params['current_start'] = current_start
+                    params['current_end'] = current_end
+                    params['previous_start'] = previous_start
+                    params['previous_end'] = previous_end
+                    params['min_growth'] = 0.0  # Mostrar todos los crecimientos
+                    
+                    print(f"[DEBUG] Crecimiento detectado: {current_month_name} {current_year} vs mes anterior {previous_year}-{previous_month:02d}")
+                    print(f"[DEBUG] Fechas calculadas: actual={current_start} a {current_end}, anterior={previous_start} a {previous_end}")
+                    return params
+                else:
+                    print(f"[DEBUG] No se pudo detectar el mes: '{current_month_name}'")
+                break
+        
+        # Detectar patrón alternativo "primera semana de [mes actual] vs primera semana de [mes anterior]"
+        growth_match_alt = re.search(r'primera\s+semana\s+(?:de\s+)?(\w+).*comparaci[oó]n.*primera\s+semana\s+(?:de\s+)?(\w+)', message, re.IGNORECASE)
+        if growth_match_alt:
+            current_month_name = growth_match_alt.group(1).lower()
+            previous_month_name = growth_match_alt.group(2).lower()
+            
+            current_month = detect_month_by_name(current_month_name)
+            previous_month = detect_month_by_name(previous_month_name)
+            
+            if current_month and previous_month:
+                # Determinar año (asumir año actual para ambos)
+                from datetime import datetime
+                current_year = datetime.now().year
+                
+                # Si el mes actual es enero y el anterior es diciembre, ajustar años
+                if current_month == 1 and previous_month == 12:
+                    previous_year = current_year - 1
+                else:
+                    previous_year = current_year
+                
+                # Calcular semanas
+                current_start, current_end = get_first_week_of_month(current_year, current_month)
+                previous_start, previous_end = get_first_week_of_month(previous_year, previous_month)
+                
+                params['current_start'] = current_start
+                params['current_end'] = current_end
+                params['previous_start'] = previous_start
+                params['previous_end'] = previous_end
+                params['min_growth'] = 0.0  # Mostrar todos los crecimientos
+                
+                print(f"[DEBUG] Crecimiento detectado: {current_month_name} {current_year} vs {previous_month_name} {previous_year}")
+                return params
+        
+        # Buscar años mencionados
+        year_match = re.findall(r'\b(20[012]\d)\b', message)
+        if year_match:
+            # Si hay años, usar lógica similar pero con años específicos
+            pass
+        
+        return params
+
+    def _format_demand_growth_response(self, results, params):
+        """Formatea la respuesta con los resultados de crecimiento de demanda."""
+        response = f"✅ **Análisis de Crecimiento de Demanda Completado**\n\n"
+        response += f"📊 **Comparativa de Periodos:**\n"
+        response += f"- **Periodo Actual:** {params['current_start']} → {params['current_end']}\n"
+        response += f"- **Periodo Anterior:** {params['previous_start']} → {params['previous_end']}\n"
+        response += f"- **Medidores con Crecimiento:** {len(results)}\n\n"
+        
+        if len(results) > 10:
+            response += f"📋 **Top 10 Medidores con Mayor Crecimiento:**\n\n"
+            display_results = results[:10]
+        else:
+            response += f"📋 **Medidores con Crecimiento Identificado:**\n\n"
+            display_results = results
+        
+        for i, result in enumerate(display_results, 1):
+            response += f"**{i}. {result['device_id']}** - {result['description']}\n"
+            response += f"   📈 **Crecimiento:** +{result['growth_percentage']:.1f}%\n"
+            response += f"   🔸 **Energía Actual:** {result['current_period_energy']:,.0f} kWh\n"
+            response += f"   🔸 **Energía Anterior:** {result['previous_period_energy']:,.0f} kWh\n"
+            response += f"   👤 **Cliente:** {result['customerid']}\n\n"
+        
+        if len(results) > 10:
+            response += f"... y **{len(results) - 10} medidores** más con crecimiento positivo.\n\n"
+        
+        response += "💡 **Nota:** Este análisis compara el consumo energético total entre periodos equivalentes."
+        
+        return response

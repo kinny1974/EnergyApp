@@ -56,7 +56,7 @@ export interface ChartDataPoint {
 export interface AIAnalysis {
   resumen: string;
   habitos: string;
-  anomalias: {periodo: string, descripcion: string}[];
+  anomalias: { periodo: string, descripcion: string }[];
   recomendacion: string;
   estado_general: 'NORMAL' | 'ALERTA' | 'CRITICO' | 'DESCONOCIDO';
 }
@@ -122,7 +122,7 @@ export const uploadReadings = async (deviceId: string, file: File): Promise<Uplo
  */
 export const getAvailableYears = async (deviceId: string): Promise<YearsResponse> => {
   const response = await fetch(`${BASE_URL}/years/${deviceId}`);
-  
+
   if (!response.ok) {
     throw new Error("Error al obtener años disponibles");
   }
@@ -153,7 +153,7 @@ export const getYearsFromCsv = async (file: File): Promise<YearsResponse> => {
  */
 export const getAvailableDevices = async (): Promise<DevicesResponse> => {
   const response = await fetch(`${BASE_URL}/devices`);
-  
+
   if (!response.ok) {
     throw new Error("Error al obtener dispositivos disponibles");
   }
@@ -165,7 +165,7 @@ export const getAvailableDevices = async (): Promise<DevicesResponse> => {
  */
 export const getDeviceInfo = async (deviceId: string): Promise<DeviceInfo> => {
   const response = await fetch(`${BASE_URL}/devices/${deviceId}`);
-  
+
   if (!response.ok) {
     throw new Error("Error al obtener información del dispositivo");
   }
@@ -176,11 +176,11 @@ export const getDeviceInfo = async (deviceId: string): Promise<DeviceInfo> => {
  * Ejecuta el análisis de IA usando la base de datos como fuente base.
  */
 export const analyzeEnergy = async (
-  deviceId: string, 
-  baseYear: string | number, 
+  deviceId: string,
+  baseYear: string | number,
   targetDate: string
 ): Promise<AnalysisResult> => {
-  
+
   const payload: AnalyzePayload = {
     device_id: deviceId,
     base_year: typeof baseYear === 'string' ? parseInt(baseYear) : baseYear,
@@ -225,6 +225,83 @@ export const analyzeEnergyWithFile = async (
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "Error en el análisis con archivo");
+  }
+  return response.json();
+};
+
+// Tipos para máxima potencia
+export interface MaxPowerRequest {
+  device_id: string;
+  start_date: string; // YYYY-MM-DD
+  end_date: string;   // YYYY-MM-DD
+}
+
+export interface MaxPowerResult {
+  device_id: string;
+  start_date: string;
+  end_date: string;
+  max_power_kw: number;
+  max_kwhd: number;
+  datetime: string;
+}
+
+export interface MaxPowerResponse {
+  max_power_data: MaxPowerResult;
+}
+
+/**
+ * Obtiene la máxima potencia de un medidor en un periodo específico.
+ */
+export const getMaxPower = async (payload: MaxPowerRequest): Promise<MaxPowerResponse> => {
+  const response = await fetch(`${BASE_URL}/max-power`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error al obtener máxima potencia');
+  }
+  return response.json();
+};
+
+// Tipos para energía total
+export interface TotalEnergyRequest {
+  device_id: string;
+  start_date: string; // YYYY-MM-DD
+  end_date: string;   // YYYY-MM-DD
+}
+
+export interface TotalEnergyResult {
+  device_id: string;
+  start_date: string;
+  end_date: string;
+  total_energy_kwh: number;
+  average_power_kw: number;
+  period_days: number;
+  reading_count: number;
+}
+
+export interface TotalEnergyResponse {
+  total_energy_data: TotalEnergyResult;
+}
+
+/**
+ * Obtiene la energía total consumida de un medidor en un periodo específico.
+ */
+export const getTotalEnergy = async (payload: TotalEnergyRequest): Promise<TotalEnergyResponse> => {
+  const response = await fetch(`${BASE_URL}/total-energy`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Error al obtener energía total');
   }
   return response.json();
 };

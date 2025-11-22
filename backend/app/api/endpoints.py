@@ -30,6 +30,13 @@ class TotalEnergyRequest(BaseModel):
     start_date: str  # formato YYYY-MM-DD
     end_date: str    # formato YYYY-MM-DD
 
+class DemandGrowthRequest(BaseModel):
+    current_period_start: str  # formato YYYY-MM-DD
+    current_period_end: str    # formato YYYY-MM-DD
+    previous_period_start: str # formato YYYY-MM-DD
+    previous_period_end: str   # formato YYYY-MM-DD
+    min_growth_percentage: float = 0.0  # porcentaje mínimo de crecimiento
+
 @router.post("/analyze-outliers")
 def analyze_outliers(req: OutlierRequest, db: Session = Depends(get_db)):
     """Busca medidores con desviaciones mayores al umbral en el rango de fechas dado."""
@@ -241,6 +248,23 @@ def analyze_energy(req: AnalysisReq, db: Session = Depends(get_db)):
             req.target_date,
             req.base_year
         )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/demand-growth")
+def analyze_demand_growth(req: DemandGrowthRequest, db: Session = Depends(get_db)):
+    """Analiza el crecimiento de demanda entre dos periodos comparables."""
+    repo = EnergyRepository(db)
+    service = EnergyService(repo)
+    try:
+        resultados = service.analyze_demand_growth(
+            current_period_start=req.current_period_start,
+            current_period_end=req.current_period_end,
+            previous_period_start=req.previous_period_start,
+            previous_period_end=req.previous_period_end,
+            min_growth_percentage=req.min_growth_percentage
+        )
+        return {"growth_analysis": resultados}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
