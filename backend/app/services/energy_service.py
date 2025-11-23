@@ -153,11 +153,29 @@ class EnergyService(Subject):
         """
 
         try:
+            # Inicializar el Cliente con el nuevo SDK
             client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt
-            )
+            
+            # Opciones disponibles (descomenta la que quieras usar):
+            # model_id = 'gemini-2.0-flash'  # Versión de principios de 2025
+            model_id = 'gemini-2.5-flash'  # Versión de mediados de 2025 (Recomendada)
+
+            try:
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=prompt
+                )
+                print(f"✅ Análisis completado con {model_id}")
+            except Exception as e:
+                print(f"Error: {e}")
+                print("Tip: Verifica si tu API Key tiene acceso a la versión 2.5, si no, prueba con la 2.0")
+                # Fallback a gemini-2.0-flash
+                model_id = 'gemini-2.0-flash'
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=prompt
+                )
+                print(f"✅ Análisis completado con {model_id} (fallback)")
             
             response_text = response.text.strip()
             

@@ -635,7 +635,16 @@ const EnergyDashboard: React.FC = () => {
                       </h4>
                       {result.analysis.anomalias && result.analysis.anomalias.length > 0 ? (
                         <ul className="list-disc list-inside text-sm text-red-600 space-y-1">
-                          {result.analysis.anomalias.map((a: any, i: number) => <li key={i}>{a.periodo}: {a.descripcion}</li>)}
+                          {result.analysis.anomalias.map((a: any, i: number) => {
+                            // Safely handle anomaly objects - they might be strings or objects
+                            if (typeof a === 'string') {
+                              return <li key={i}>{a}</li>;
+                            } else if (a && typeof a === 'object') {
+                              return <li key={i}>{a.periodo || 'Período'}: {a.descripcion || 'Descripción no disponible'}</li>;
+                            } else {
+                              return <li key={i}>Anomalía no válida</li>;
+                            }
+                          })}
                         </ul>
                       ) : (
                         <p className="text-sm text-green-600 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Ninguna crítica.</p>
