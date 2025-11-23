@@ -4,10 +4,13 @@ import { Send, Zap, MessageSquare, Loader2, X, ChevronUp, ChevronDown } from 'lu
 interface ChatMessage {
   role: 'user' | 'bot';
   content: string;
+  parameters?: any;
+  type?: string;
 }
 
 interface EnergyChatbotProps {
   context?: Record<string, any>; // device_id, fecha, etc.
+  onParametersExtracted?: (params: any, type: string) => void;
 }
 
 const FAQS = [
@@ -17,9 +20,12 @@ const FAQS = [
   '¿Cuánta energía consumió el medidor 1234567 en agosto 2024?',
   'Encuentra outliers en medidores con desviaciones del 30% usando año base 2023',
   'Demanda de energía del medidor 1234567 en julio 2024',
+  'compara la curva de carga del día 20 de octubre de 2025, con la curva de carga promedio para el año 2024, del medidor 36075003',
+  'compara el comportamiento de la demanda para el día 20 de octubre de 2025, con el comportamiento promedio de la demanda para el año 2024, del medidor 36075003',
 ];
 
-const EnergyChatbot: React.FC<EnergyChatbotProps> = ({ context }) => {
+const EnergyChatbot: React.FC<EnergyChatbotProps> = ({ context, onParametersExtracted }) => {
+  console.log('🔍 [CHATBOT] Component props:', { context, onParametersExtracted: !!onParametersExtracted });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -56,7 +62,52 @@ const EnergyChatbot: React.FC<EnergyChatbotProps> = ({ context }) => {
         body: JSON.stringify({ message: msg, context }),
       });
       const data = await res.json();
-      setMessages((prev) => [...prev, { role: 'bot', content: data.response }]);
+      console.log('🔍 [CHATBOT] Full response from backend:', data);
+
+      // Handle the new response structure with parameters
+      const botMessage: ChatMessage = {
+        role: 'bot',
+        content: data.response,
+        parameters: data.parameters,
+        type: data.type
+      };
+
+      setMessages((prev) => [...prev, botMessage]);
+
+      // If parameters are available and callback is provided, call it
+      if (data.parameters && onParametersExtracted) {
+        console.log('🔍 [CHATBOT] Extracted parameters from chatbot:', data.parameters);
+        console.log('🔍 [CHATBOT] Type:', data.type);
+        console.log('🔍 [CHATBOT] Calling onParametersExtracted callback...');
+
+        // Ensure we have the required parameters for load curve comparison
+        if (data.type === 'load_curve_comparison') {
+          const requiredParams = ['device_id', 'target_date', 'base_year'];
+          const missingParams = requiredParams.filter(param => !data.parameters[param]);
+
+          if (missingParams.length > 0) {
+            console.warn('⚠️ [CHATBOT] Missing required parameters:', missingParams);
+            console.warn('⚠️ [CHATBOT] Available parameters:', data.parameters);
+          } else {
+            console.log('✅ [CHATBOT] All required parameters present');
+          }
+        }
+
+        // Call the callback with the parameters
+        try {
+          onParametersExtracted(data.parameters, data.type);
+          console.log('✅ [CHATBOT] Callback executed successfully');
+        } catch (error) {
+          console.error('❌ [CHATBOT] Error executing callback:', error);
+        }
+      } else {
+        console.log('🔍 [CHATBOT] No parameters found or callback not provided:', {
+          hasParameters: !!data.parameters,
+          hasCallback: !!onParametersExtracted,
+          parameters: data.parameters,
+          type: data.type
+        });
+      }
     } catch (e) {
       setMessages((prev) => [...prev, { role: 'bot', content: 'Error al contactar con el asistente.' }]);
     } finally {
@@ -158,6 +209,11 @@ const EnergyChatbot: React.FC<EnergyChatbotProps> = ({ context }) => {
                 <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[80%] px-4 py-2 rounded-lg text-sm ${m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800'}`}>
                     {m.content}
+                    {m.parameters && m.type === 'load_curve_comparison' && (
+                      <div className="mt-2 text-xs text-green-600">
+                        ✅ Parámetros detectados automáticamente
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

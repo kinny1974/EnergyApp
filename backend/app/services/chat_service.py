@@ -9,10 +9,11 @@ class ChatService:
             raise ValueError("GEMINI_API_KEY no está configurada en variables de entorno.")
         self.energy_service = energy_service
 
-    def ask_gemini(self, message: str, context: dict = None) -> str:
+    def ask_gemini(self, message: str, context: dict = None) -> dict:
         """
         Envía un mensaje a Gemini, agregando contexto eléctrico si se provee.
         Usa un sistema híbrido: primero regex para casos claros, luego Gemini para clasificación.
+        Retorna un diccionario con la respuesta y parámetros para actualizar la UI.
         """
         try:
             # DEBUG: Agregar logging para ver qué está detectando
@@ -38,6 +39,11 @@ class ChatService:
                 print(f"[DEBUG] Detectado como consulta de energía total (regex)")
                 return self._handle_total_energy_query(message)
             
+            # Detectar si la pregunta es sobre comparación de curvas de carga (EnergyDashboard)
+            if self._is_load_curve_comparison_query(message):
+                print(f"[DEBUG] Detectado como consulta de curva de carga (EnergyDashboard)")
+                return self._handle_load_curve_comparison_query(message)
+            
             # Si no se detectó con regex, usar Gemini para clasificar la intención
             print(f"[DEBUG] No detectado por regex, clasificando con Gemini")
             intent = self._classify_intent_with_gemini(message)
@@ -52,6 +58,8 @@ class ChatService:
                 return self._handle_max_power_query(message)
             elif intent == "total_energy":
                 return self._handle_total_energy_query(message)
+            elif intent == "load_curve_comparison":
+                return self._handle_load_curve_comparison_query(message)
             else:
                 # Para preguntas generales, usar Gemini normalmente
                 prompt = self._build_prompt(message, context)
@@ -61,9 +69,17 @@ class ChatService:
                     model="gemini-2.0-flash",
                     contents=prompt
                 )
-                return response.text
+                return {
+                    "response": response.text,
+                    "parameters": None,
+                    "type": "general"
+                }
         except Exception as e:
-            return f"Error consultando Gemini: {str(e)}"
+            return {
+                "response": f"Error consultando Gemini: {str(e)}",
+                "parameters": None,
+                "type": "error"
+            }
 
     def _is_outlier_query(self, message: str) -> bool:
         """Detecta si la pregunta es sobre búsqueda de outliers/desviaciones."""
@@ -157,17 +173,46 @@ class ChatService:
             print(f"[DEBUG] Patrón coincidente encontrado para crecimiento de demanda")
         return is_match
 
-    def _handle_outlier_query(self, message: str) -> str:
+    def _is_load_curve_comparison_query(self, message: str) -> bool:
+        """Detecta si la pregunta es sobre comparación de curvas de carga (EnergyDashboard)."""
+        patterns = [
+            r"compara.*curva\s+de\s+carga",
+            r"compara.*comportamiento.*demanda",
+            r"comparación.*curva\s+de\s+carga",
+            r"comparación.*comportamiento.*demanda",
+            r"análisis.*curva\s+de\s+carga",
+            r"curva\s+de\s+carga.*vs.*promedio",
+            r"curva\s+de\s+carga.*comparación",
+            r"comportamiento.*demanda.*vs.*promedio",
+            r"comportamiento.*demanda.*comparación",
+            # Patrones específicos del ejemplo del usuario
+            r"compara.*curva\s+de\s+carga.*día.*\d+.*octubre.*\d{4}.*promedio.*año.*\d{4}.*medidor.*\d+",
+            r"compara.*comportamiento.*demanda.*día.*\d+.*octubre.*\d{4}.*promedio.*año.*\d{4}.*medidor.*\d+"
+        ]
+        message_lower = message.lower()
+        is_match = any(re.search(pattern, message_lower) for pattern in patterns)
+        print(f"[DEBUG] _is_load_curve_comparison_query: '{message_lower}' -> {is_match}")
+        return is_match
+
+    def _handle_outlier_query(self, message: str) -> dict:
         """Procesa consultas sobre búsqueda de outliers usando EnergyService."""
         if not self.energy_service:
-            return "Error: No tengo acceso al servicio de análisis energético para buscar datos reales."
+            return {
+                "response": "Error: No tengo acceso al servicio de análisis energético para buscar datos reales.",
+                "parameters": None,
+                "type": "error"
+            }
         
         try:
             # Extraer parámetros de la consulta usando regex
             params = self._extract_outlier_params(message)
             
             if not all([params['base_year'], params['start_date'], params['end_date'], params['threshold']]):
-                return "Error: No pude extraer todos los parámetros necesarios de tu consulta. Por favor, especifica el año base, el periodo de análisis y el porcentaje de desviación."
+                return {
+                    "response": "Error: No pude extraer todos los parámetros necesarios de tu consulta. Por favor, especifica el año base, el periodo de análisis y el porcentaje de desviación.",
+                    "parameters": None,
+                    "type": "error"
+                }
             
             # Informar que se está procesando
             print(f"Procesando consulta de outliers: {params}")
@@ -175,37 +220,65 @@ class ChatService:
             # Ejecutar búsqueda de outliers con manejo de timeout
             results = self.energy_service.find_outlier_devices(
                 base_year=params['base_year'],
-                start_date=params['start_date'], 
+                start_date=params['start_date'],
                 end_date=params['end_date'],
                 threshold=params['threshold']
             )
             
             if not results:
-                return f"✅ **Análisis Completado**\n\nNo se encontraron medidores con desviaciones mayores al {params['threshold']}% en el periodo del {params['start_date']} al {params['end_date']}."
+                return {
+                    "response": f"✅ **Análisis Completado**\n\nNo se encontraron medidores con desviaciones mayores al {params['threshold']}% en el periodo del {params['start_date']} al {params['end_date']}.",
+                    "parameters": None,
+                    "type": "outlier"
+                }
             
             # Formatear respuesta
-            return self._format_outlier_response(results, params)
+            return {
+                "response": self._format_outlier_response(results, params),
+                "parameters": params,
+                "type": "outlier"
+            }
             
         except Exception as e:
             error_msg = str(e)
             if "timeout" in error_msg.lower():
-                return "❌ **Error de Timeout**\n\nLa consulta tardó demasiado tiempo. Intenta reducir el rango de fechas o contacta al administrador."
+                return {
+                    "response": "❌ **Error de Timeout**\n\nLa consulta tardó demasiado tiempo. Intenta reducir el rango de fechas o contacta al administrador.",
+                    "parameters": None,
+                    "type": "error"
+                }
             elif "database" in error_msg.lower():
-                return "❌ **Error de Base de Datos**\n\nNo se pudo conectar a la base de datos. Verifica que el servicio esté funcionando."
+                return {
+                    "response": "❌ **Error de Base de Datos**\n\nNo se pudo conectar a la base de datos. Verifica que el servicio esté funcionando.",
+                    "parameters": None,
+                    "type": "error"
+                }
             else:
-                return f"❌ **Error procesando la consulta:** {error_msg}"
+                return {
+                    "response": f"❌ **Error procesando la consulta:** {error_msg}",
+                    "parameters": None,
+                    "type": "error"
+                }
 
-    def _handle_max_power_query(self, message: str) -> str:
+    def _handle_max_power_query(self, message: str) -> dict:
         """Procesa consultas sobre máxima potencia usando EnergyService."""
         if not self.energy_service:
-            return "Error: No tengo acceso al servicio de análisis energético para buscar datos reales."
+            return {
+                "response": "Error: No tengo acceso al servicio de análisis energético para buscar datos reales.",
+                "parameters": None,
+                "type": "error"
+            }
         
         try:
             # Extraer parámetros de la consulta
             params = self._extract_max_power_params(message)
             
             if not all([params['device_id'], params['start_date'], params['end_date']]):
-                return "Error: No pude extraer todos los parámetros necesarios. Por favor, especifica el medidor y el periodo (día/mes/año)."
+                return {
+                    "response": "Error: No pude extraer todos los parámetros necesarios. Por favor, especifica el medidor y el periodo (día/mes/año).",
+                    "parameters": None,
+                    "type": "error"
+                }
             
             # Obtener datos de máxima potencia
             result = self.energy_service.repo.get_max_power_in_period(
@@ -215,16 +288,32 @@ class ChatService:
             )
             
             if not result:
-                return f"❌ No se encontraron datos de potencia para el medidor {params['device_id']} en el periodo especificado."
+                return {
+                    "response": f"❌ No se encontraron datos de potencia para el medidor {params['device_id']} en el periodo especificado.",
+                    "parameters": None,
+                    "type": "max_power"
+                }
             
-            return self._format_max_power_response(result, params)
+            return {
+                "response": self._format_max_power_response(result, params),
+                "parameters": params,
+                "type": "max_power"
+            }
             
         except Exception as e:
             error_msg = str(e)
             if "not found" in error_msg.lower() or "404" in error_msg:
-                return "❌ **Medidor no encontrado:** Verifica que el ID del medidor sea correcto."
+                return {
+                    "response": "❌ **Medidor no encontrado:** Verifica que el ID del medidor sea correcto.",
+                    "parameters": None,
+                    "type": "error"
+                }
             else:
-                return f"❌ **Error procesando consulta de potencia:** {error_msg}"
+                return {
+                    "response": f"❌ **Error procesando consulta de potencia:** {error_msg}",
+                    "parameters": None,
+                    "type": "error"
+                }
 
     def _extract_max_power_params(self, message: str):
         """Extrae parámetros de consultas de máxima potencia."""
@@ -330,10 +419,14 @@ class ChatService:
         
         return response
 
-    def _handle_total_energy_query(self, message: str) -> str:
+    def _handle_total_energy_query(self, message: str) -> dict:
         """Procesa consultas sobre energía total usando EnergyService."""
         if not self.energy_service:
-            return "Error: No tengo acceso al servicio de análisis energético para buscar datos reales."
+            return {
+                "response": "Error: No tengo acceso al servicio de análisis energético para buscar datos reales.",
+                "parameters": None,
+                "type": "error"
+            }
         
         try:
             # Extraer parámetros de la consulta
@@ -342,7 +435,11 @@ class ChatService:
             
             if not all([params['device_id'], params['start_date'], params['end_date']]):
                 missing = [k for k, v in params.items() if not v and k in ['device_id', 'start_date', 'end_date']]
-                return f"Error: No pude extraer los parámetros: {missing}. Por favor, especifica el medidor y el periodo claramente."
+                return {
+                    "response": f"Error: No pude extraer los parámetros: {missing}. Por favor, especifica el medidor y el periodo claramente.",
+                    "parameters": None,
+                    "type": "error"
+                }
             
             # Obtener datos de energía total
             result = self.energy_service.repo.get_total_energy_in_period(
@@ -385,18 +482,34 @@ class ChatService:
                     
                     if result_alt:
                         found_in_other_year = True
-                        return f"✅ **Datos encontrados en {search_year}:**\n\n" + self._format_total_energy_response(result_alt, {'device_id': params['device_id'], 'period_type': params['period_type']}) + f"\n\n💡 **Nota:** No había datos para {params['start_date'][:4]}, se usaron datos de {search_year}."
+                        return {
+                            "response": f"✅ **Datos encontrados en {search_year}:**\n\n" + self._format_total_energy_response(result_alt, {'device_id': params['device_id'], 'period_type': params['period_type']}) + f"\n\n💡 **Nota:** No había datos para {params['start_date'][:4]}, se usaron datos de {search_year}.",
+                            "parameters": params,
+                            "type": "total_energy"
+                        }
                 
                 if not found_in_other_year:
                     # Intentar mostrar medidores disponibles para ayudar al usuario
                     try:
                         available_devices = self.energy_service.get_available_devices()
                         device_list = ", ".join([d['deviceid'] for d in available_devices['devices'][:5]])
-                        return f"❌ No se encontraron datos de energía para el medidor {params['device_id']} en el periodo {params['start_date']} a {params['end_date']} ni en años anteriores.\n\n💡 **Medidores disponibles:** {device_list}"
+                        return {
+                            "response": f"❌ No se encontraron datos de energía para el medidor {params['device_id']} en el periodo {params['start_date']} a {params['end_date']} ni en años anteriores.\n\n💡 **Medidores disponibles:** {device_list}",
+                            "parameters": None,
+                            "type": "total_energy"
+                        }
                     except:
-                        return f"❌ No se encontraron datos de energía para el medidor {params['device_id']} en el periodo {params['start_date']} a {params['end_date']}.\n\n💡 **Sugerencia:** Verifica que el ID del medidor sea correcto y que haya datos para el periodo solicitado."
+                        return {
+                            "response": f"❌ No se encontraron datos de energía para el medidor {params['device_id']} en el periodo {params['start_date']} a {params['end_date']}.\n\n💡 **Sugerencia:** Verifica que el ID del medidor sea correcto y que haya datos para el periodo solicitado.",
+                            "parameters": None,
+                            "type": "total_energy"
+                        }
             
-            return self._format_total_energy_response(result, params)
+            return {
+                "response": self._format_total_energy_response(result, params),
+                "parameters": params,
+                "type": "total_energy"
+            }
             
         except Exception as e:
             error_msg = str(e)
@@ -405,11 +518,23 @@ class ChatService:
                 try:
                     available_devices = self.energy_service.get_available_devices()
                     device_list = ", ".join([d['deviceid'] for d in available_devices['devices'][:5]])
-                    return f"❌ **Medidor no encontrado:** {params['device_id']}\n\n💡 **Medidores disponibles:** {device_list}\n\n**Sugerencia:** Verifica el ID del medidor."
+                    return {
+                        "response": f"❌ **Medidor no encontrado:** {params['device_id']}\n\n💡 **Medidores disponibles:** {device_list}\n\n**Sugerencia:** Verifica el ID del medidor.",
+                        "parameters": None,
+                        "type": "error"
+                    }
                 except:
-                    return "❌ **Medidor no encontrado:** Verifica que el ID del medidor sea correcto."
+                    return {
+                        "response": "❌ **Medidor no encontrado:** Verifica que el ID del medidor sea correcto.",
+                        "parameters": None,
+                        "type": "error"
+                    }
             else:
-                return f"❌ **Error procesando consulta de energía:** {error_msg}"
+                return {
+                    "response": f"❌ **Error procesando consulta de energía:** {error_msg}",
+                    "parameters": None,
+                    "type": "error"
+                }
 
     def _extract_energy_params(self, message: str):
         """Extrae parámetros de consultas de energía total."""
@@ -731,11 +856,12 @@ Analiza la siguiente consulta y clasifícala en una de estas categorías:
 - "outlier": Consultas sobre búsqueda de outliers, desviaciones, anomalías, medidores que exceden umbrales
 - "max_power": Consultas sobre máxima potencia, potencia pico, máximo de potencia
 - "total_energy": Consultas sobre energía total, consumo total, suma de energía, demanda de energía
+- "load_curve_comparison": Consultas sobre comparación de curvas de carga, comportamiento de demanda, análisis diario vs promedio histórico
 - "general": Preguntas generales sobre conceptos eléctricos, eficiencia energética, o cualquier otra cosa
 
 Consulta: "{message}"
 
-Responde SOLO con una de estas palabras: demand_growth, outlier, max_power, total_energy, general
+Responde SOLO con una de estas palabras: demand_growth, outlier, max_power, total_energy, load_curve_comparison, general
 """
             
             client = genai.Client(api_key=self.api_key)
@@ -779,17 +905,25 @@ Si la pregunta está fuera del ámbito de los servicios disponibles, responde cl
         base += "Responde en español. Si la pregunta es sobre conceptos eléctricos, explica de forma sencilla y técnica."
         return base
 
-    def _handle_demand_growth_query(self, message: str) -> str:
+    def _handle_demand_growth_query(self, message: str) -> dict:
         """Procesa consultas sobre crecimiento de demanda usando EnergyService."""
         if not self.energy_service:
-            return "Error: No tengo acceso al servicio de análisis energético para buscar datos reales."
+            return {
+                "response": "Error: No tengo acceso al servicio de análisis energético para buscar datos reales.",
+                "parameters": None,
+                "type": "error"
+            }
         
         try:
             # Extraer parámetros de la consulta
             params = self._extract_demand_growth_params(message)
             
             if not all([params['current_start'], params['current_end'], params['previous_start'], params['previous_end']]):
-                return "Error: No pude extraer todos los parámetros necesarios. Por favor, especifica claramente los periodos a comparar (ej: 'primera semana de noviembre vs primera semana de octubre')."
+                return {
+                    "response": "Error: No pude extraer todos los parámetros necesarios. Por favor, especifica claramente los periodos a comparar (ej: 'primera semana de noviembre vs primera semana de octubre').",
+                    "parameters": None,
+                    "type": "error"
+                }
             
             # Informar que se está procesando
             print(f"Procesando consulta de crecimiento de demanda: {params}")
@@ -804,19 +938,39 @@ Si la pregunta está fuera del ámbito de los servicios disponibles, responde cl
             )
             
             if not results:
-                return f"✅ **Análisis Completado**\n\nNo se encontraron medidores con crecimiento de demanda significativo en la comparación entre:\n- **Periodo actual:** {params['current_start']} a {params['current_end']}\n- **Periodo anterior:** {params['previous_start']} a {params['previous_end']}"
+                return {
+                    "response": f"✅ **Análisis Completado**\n\nNo se encontraron medidores con crecimiento de demanda significativo en la comparación entre:\n- **Periodo actual:** {params['current_start']} a {params['current_end']}\n- **Periodo anterior:** {params['previous_start']} a {params['previous_end']}",
+                    "parameters": params,
+                    "type": "demand_growth"
+                }
             
             # Formatear respuesta
-            return self._format_demand_growth_response(results, params)
+            return {
+                "response": self._format_demand_growth_response(results, params),
+                "parameters": params,
+                "type": "demand_growth"
+            }
             
         except Exception as e:
             error_msg = str(e)
             if "timeout" in error_msg.lower():
-                return "❌ **Error de Timeout**\n\nLa consulta tardó demasiado tiempo. Intenta reducir el rango de fechas o contacta al administrador."
+                return {
+                    "response": "❌ **Error de Timeout**\n\nLa consulta tardó demasiado tiempo. Intenta reducir el rango de fechas o contacta al administrador.",
+                    "parameters": None,
+                    "type": "error"
+                }
             elif "database" in error_msg.lower():
-                return "❌ **Error de Base de Datos**\n\nNo se pudo conectar a la base de datos. Verifica que el servicio esté funcionando."
+                return {
+                    "response": "❌ **Error de Base de Datos**\n\nNo se pudo conectar a la base de datos. Verifica que el servicio esté funcionando.",
+                    "parameters": None,
+                    "type": "error"
+                }
             else:
-                return f"❌ **Error procesando la consulta:** {error_msg}"
+                return {
+                    "response": f"❌ **Error procesando la consulta:** {error_msg}",
+                    "parameters": None,
+                    "type": "error"
+                }
 
     def _extract_demand_growth_params(self, message: str):
         """Extrae parámetros de consultas de crecimiento de demanda."""
@@ -994,5 +1148,319 @@ Si la pregunta está fuera del ámbito de los servicios disponibles, responde cl
             response += f"... y **{len(results) - 10} medidores** más con crecimiento positivo.\n\n"
         
         response += "💡 **Nota:** Este análisis compara el consumo energético total entre periodos equivalentes."
+        
+        return response
+
+    def _handle_load_curve_comparison_query(self, message: str) -> dict:
+        """Procesa consultas sobre comparación de curvas de carga usando EnergyService."""
+        if not self.energy_service:
+            return {
+                "response": "Error: No tengo acceso al servicio de análisis energético para buscar datos reales.",
+                "parameters": None,
+                "type": "error"
+            }
+        
+        try:
+            # Extraer parámetros de la consulta
+            params = self._extract_load_curve_params(message)
+            print(f"[DEBUG] Load curve params extracted: {params}")
+            
+            if not all([params['device_id'], params['target_date'], params['base_year']]):
+                print(f"[DEBUG] Missing parameters: device_id={params['device_id']}, target_date={params['target_date']}, base_year={params['base_year']}")
+                # Intentar usar Gemini para extraer parámetros si la extracción automática falla
+                return self._handle_load_curve_with_gemini(message)
+            
+            # Informar que se está procesando
+            print(f"Procesando consulta de curva de carga: {params}")
+            
+            # Ejecutar análisis de curva de carga
+            result = self.energy_service.analyze_day(
+                device_id=params['device_id'],
+                target_date_str=params['target_date'],
+                base_year=params['base_year']
+            )
+            
+            # Formatear respuesta usando el análisis de energy_service
+            return {
+                "response": self._format_load_curve_response(result, params),
+                "parameters": params,
+                "type": "load_curve_comparison"
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "timeout" in error_msg.lower():
+                return {
+                    "response": "❌ **Error de Timeout**\n\nLa consulta tardó demasiado tiempo. Intenta reducir el rango de fechas o contacta al administrador.",
+                    "parameters": None,
+                    "type": "error"
+                }
+            elif "database" in error_msg.lower():
+                return {
+                    "response": "❌ **Error de Base de Datos**\n\nNo se pudo conectar a la base de datos. Verifica que el servicio esté funcionando.",
+                    "parameters": None,
+                    "type": "error"
+                }
+            else:
+                return {
+                    "response": f"❌ **Error procesando la consulta:** {error_msg}",
+                    "parameters": None,
+                    "type": "error"
+                }
+
+    def _handle_load_curve_with_gemini(self, message: str) -> dict:
+        """Usa Gemini para extraer parámetros cuando la extracción automática falla."""
+        try:
+            extraction_prompt = f"""
+Analiza la siguiente consulta sobre comparación de curvas de carga y extrae los parámetros necesarios:
+
+Consulta: "{message}"
+
+Parámetros a extraer:
+- device_id: ID del medidor (número de 7-8 dígitos)
+- target_date: Fecha específica a analizar en formato YYYY-MM-DD
+- base_year: Año base para el promedio histórico
+
+Ejemplo de respuesta en formato JSON:
+{{
+    "device_id": "36075003",
+    "target_date": "2025-10-20",
+    "base_year": 2024
+}}
+
+Responde SOLO con el objeto JSON, sin texto adicional.
+"""
+            
+            client = genai.Client(api_key=self.api_key)
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=extraction_prompt
+            )
+            
+            response_text = response.text.strip()
+            print(f"[DEBUG] Gemini extraction response: {response_text}")
+            
+            # Limpiar la respuesta si tiene markdown
+            if response_text.startswith('```json'):
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif response_text.startswith('```'):
+                response_text = response_text.split('```')[1].strip()
+            
+            # Parsear JSON
+            import json
+            params = json.loads(response_text)
+            
+            print(f"[DEBUG] Gemini extracted params: {params}")
+            
+            # Validar que tenemos los parámetros necesarios
+            if all([params.get('device_id'), params.get('target_date'), params.get('base_year')]):
+                # Ejecutar análisis con los parámetros extraídos por Gemini
+                result = self.energy_service.analyze_day(
+                    device_id=params['device_id'],
+                    target_date_str=params['target_date'],
+                    base_year=params['base_year']
+                )
+                return {
+                    "response": self._format_load_curve_response(result, params),
+                    "parameters": params,
+                    "type": "load_curve_comparison"
+                }
+            else:
+                return {
+                    "response": "Error: No pude extraer todos los parámetros necesarios incluso con ayuda de IA. Por favor, especifica claramente el medidor, la fecha a analizar y el año base.",
+                    "parameters": None,
+                    "type": "error"
+                }
+                
+        except Exception as e:
+            print(f"[DEBUG] Error in Gemini parameter extraction: {e}")
+            return {
+                "response": "Error: No pude procesar la consulta. Por favor, verifica que la consulta incluya el ID del medidor, la fecha específica y el año base para el promedio.",
+                "parameters": None,
+                "type": "error"
+            }
+
+    def _extract_load_curve_params(self, message: str):
+        """Extrae parámetros de consultas de comparación de curvas de carga."""
+        params = {
+            'device_id': None,
+            'target_date': None,
+            'base_year': None
+        }
+        
+        print(f"[DEBUG] Extracting parameters from: {message}")
+        
+        # Función auxiliar para detectar meses por nombre
+        def detect_month_by_name(text):
+            meses = {
+                'enero': '01', 'febrero': '02', 'marzo': '03', 'abril': '04',
+                'mayo': '05', 'junio': '06', 'julio': '07', 'agosto': '08',
+                'septiembre': '09', 'octubre': '10', 'noviembre': '11', 'diciembre': '12'
+            }
+            text_lower = text.lower()
+            for mes_nombre, mes_numero in meses.items():
+                if mes_nombre in text_lower:
+                    return mes_numero
+            return None
+        
+        # Buscar ID del medidor - patrones más flexibles
+        device_patterns = [
+            r"medidor\s+(\d+)",
+            r"para\s+el\s+medidor\s+(\d+)",
+            r"del\s+medidor\s+(\d+)",
+            r"device_id[:\s]+(\d+)",
+            r"id[:\s]+(\d+)",
+            r"\b(\d{7,8})\b",  # Números de 7-8 dígitos como IDs
+            r"medidor.*?(\d{7,8})"  # Buscar números después de "medidor"
+        ]
+        
+        for pattern in device_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                params['device_id'] = match.group(1)
+                print(f"[DEBUG] Found device_id: {params['device_id']}")
+                break
+        
+        # Extraer fecha objetivo (día específico) - patrones más flexibles
+        date_patterns = [
+            r"día\s+(\d{1,2})\s+(?:de\s+)?(\w+)(?:\s+de\s+(\d{4}))?",
+            r"(\d{1,2})\s+(?:de\s+)?(\w+)(?:\s+de\s+(\d{4}))?",
+            r"(\d{4}-\d{2}-\d{2})",
+            # Patrón más flexible para "20 de octubre de 2025"
+            r"(\d{1,2})\s*de\s*(\w+)\s*de\s*(\d{4})"
+        ]
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                print(f"[DEBUG] Date pattern matched: {pattern}")
+                print(f"[DEBUG] Match groups: {match.groups()}")
+                
+                if len(match.groups()) == 3:  # día, mes, año
+                    dia = match.group(1).zfill(2)
+                    mes_nombre = match.group(2).lower()
+                    año = match.group(3)
+                    
+                    mes_numero = detect_month_by_name(mes_nombre)
+                    print(f"[DEBUG] Month name '{mes_nombre}' -> number '{mes_numero}'")
+                    
+                    if mes_numero and año:
+                        params['target_date'] = f"{año}-{mes_numero}-{dia}"
+                        print(f"[DEBUG] Set target_date: {params['target_date']}")
+                        break
+                    elif mes_numero and not año:
+                        # Si no hay año, usar año actual
+                        from datetime import datetime
+                        año_actual = datetime.now().year
+                        params['target_date'] = f"{año_actual}-{mes_numero}-{dia}"
+                        print(f"[DEBUG] Set target_date (current year): {params['target_date']}")
+                        break
+                elif len(match.groups()) == 1:  # formato YYYY-MM-DD
+                    params['target_date'] = match.group(1)
+                    print(f"[DEBUG] Set target_date (YYYY-MM-DD): {params['target_date']}")
+                    break
+        
+        # Extraer año base - patrones más flexibles que manejen "el el año"
+        year_patterns = [
+            r"promedio\s+(?:para\s+)?(?:el\s+)?año\s+(\d{4})",
+            r"año\s+base\s+(\d{4})",
+            r"base\s+(\d{4})",
+            r"promedio\s+(\d{4})",
+            r"año\s+(\d{4}).*promedio",
+            r"el\s+año\s+(\d{4})",  # Patrón específico para "el año 2024"
+            r"año\s+(\d{4})",  # Patrón simple
+            # Patrón para manejar "el el año" (duplicación)
+            r"(?:el\s+)?el\s+año\s+(\d{4})",
+            # Patrón más general para cualquier mención de año con "promedio"
+            r"promedio.*?(?:el\s+)?año\s+(\d{4})"
+        ]
+        
+        for pattern in year_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                params['base_year'] = int(match.group(1))
+                print(f"[DEBUG] Found base_year with pattern '{pattern}': {params['base_year']}")
+                break
+        
+        # Si no se encontró año base, buscar cualquier año mencionado
+        if not params['base_year']:
+            # Buscar todos los años en el mensaje
+            year_matches = re.findall(r'\b(20[012]\d)\b', message)
+            print(f"[DEBUG] Found all years in message: {year_matches}")
+            
+            if year_matches:
+                # Si hay múltiples años, usar lógica para determinar cuál es el base_year
+                if len(year_matches) >= 2:
+                    # Si tenemos fecha objetivo, usar el año que no sea el de la fecha objetivo
+                    if params['target_date']:
+                        target_year = params['target_date'][:4]
+                        for year in year_matches:
+                            if year != target_year:
+                                params['base_year'] = int(year)
+                                print(f"[DEBUG] Set base_year from multiple years (different from target): {params['base_year']}")
+                                break
+                    else:
+                        # Si no hay fecha objetivo, usar el primer año que no sea el más reciente
+                        sorted_years = sorted(year_matches, reverse=True)
+                        if len(sorted_years) > 1:
+                            params['base_year'] = int(sorted_years[1])  # Segundo año más reciente
+                            print(f"[DEBUG] Set base_year from multiple years (second most recent): {params['base_year']}")
+                        else:
+                            params['base_year'] = int(sorted_years[0])
+                            print(f"[DEBUG] Set base_year from single year: {params['base_year']}")
+                else:
+                    # Solo un año encontrado
+                    params['base_year'] = int(year_matches[0])
+                    print(f"[DEBUG] Set base_year from single year found: {params['base_year']}")
+        
+        print(f"[DEBUG] Final params: {params}")
+        return params
+
+    def _format_load_curve_response(self, result, params):
+        """Formatea la respuesta con los resultados de comparación de curvas de carga."""
+        # Validar que result sea un diccionario
+        if not isinstance(result, dict):
+            print(f"[ERROR] Result is not a dict, it's a {type(result)}: {result}")
+            raise TypeError(f"Expected result to be dict, got {type(result).__name__}. Value: {str(result)[:200]}")
+        
+        # Validar que result tenga las claves necesarias
+        required_keys = ['analysis', 'medidor_info', 'device_id', 'day_name', 'chart_data']
+        missing_keys = [key for key in required_keys if key not in result]
+        if missing_keys:
+            print(f"[ERROR] Result missing keys: {missing_keys}")
+            print(f"[ERROR] Result keys available: {list(result.keys())}")
+            raise KeyError(f"Result missing required keys: {missing_keys}")
+        
+        analysis = result['analysis']
+        medidor_info = result['medidor_info']
+        
+        response = f"✅ **Análisis de Curva de Carga Completado**\n\n"
+        response += f"📊 **Configuración del Análisis:**\n"
+        response += f"- **Medidor:** {result['device_id']} - {medidor_info['description']}\n"
+        response += f"- **Fecha Analizada:** {params['target_date']} ({result['day_name']})\n"
+        response += f"- **Año Base (Baseline):** {params['base_year']}\n"
+        response += f"- **Estado General:** {analysis['estado_general']}\n\n"
+        
+        response += f"📋 **Resumen Ejecutivo:**\n"
+        response += f"{analysis['resumen']}\n\n"
+        
+        response += f"🔍 **Hábitos Detectados:**\n"
+        response += f"{analysis['habitos']}\n\n"
+        
+        if analysis['anomalias'] and len(analysis['anomalias']) > 0:
+            response += f"⚠️ **Anomalías Identificadas:**\n"
+            for anomalia in analysis['anomalias']:
+                response += f"- **{anomalia['periodo']}:** {anomalia['descripcion']}\n"
+            response += "\n"
+        
+        response += f"💡 **Recomendación Operativa:**\n"
+        response += f"\"{analysis['recomendacion']}\"\n\n"
+        
+        response += f"📈 **Detalles Técnicos:**\n"
+        response += f"- Se comparó la curva de carga real del {params['target_date']} con el promedio histórico del año {params['base_year']}\n"
+        response += f"- El análisis incluye {len(result['chart_data'])} puntos de medición horaria\n"
+        response += f"- Los datos están disponibles para visualización en el dashboard\n\n"
+        
+        response += "¿Necesitas que analice algún otro día o medidor?"
         
         return response

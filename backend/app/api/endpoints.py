@@ -116,19 +116,34 @@ def chat_with_bot(req: ChatRequest, db: Session = Depends(get_db)):
         
         # Limitar longitud del mensaje para evitar bloqueos
         if len(req.message) > 1000:
-            return {"response": "❌ **Error:** El mensaje es demasiado largo. Por favor, acórtalo."}
+            return {
+                "response": "❌ **Error:** El mensaje es demasiado largo. Por favor, acórtalo.",
+                "parameters": None,
+                "type": "error"
+            }
         
-        response = chat_service.ask_gemini(req.message, req.context)
-        return {"response": response}
+        result = chat_service.ask_gemini(req.message, req.context)
+        return result
     except Exception as e:
         error_msg = str(e)
         if "timeout" in error_msg.lower():
-            return {"response": "❌ **Timeout:** La consulta tardó demasiado tiempo. Intenta con una consulta más específica."}
+            return {
+                "response": "❌ **Timeout:** La consulta tardó demasiado tiempo. Intenta con una consulta más específica.",
+                "parameters": None,
+                "type": "error"
+            }
         elif "database" in error_msg.lower():
-            return {"response": "❌ **Error de BD:** Problema de conexión con la base de datos."}
+            return {
+                "response": "❌ **Error de BD:** Problema de conexión con la base de datos.",
+                "parameters": None,
+                "type": "error"
+            }
         else:
-            return {"response": f"❌ **Error:** {error_msg}"}
-            #raise HTTPException(status_code=500, detail=str(e))
+            return {
+                "response": f"❌ **Error:** {error_msg}",
+                "parameters": None,
+                "type": "error"
+            }
 
 # --- Esquemas Pydantic ---
 class AnalysisReq(BaseModel):

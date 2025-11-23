@@ -1,9 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
 from app.core.config import settings
 from app.api import endpoints
 from app.data.database import engine, Base
+
+# Cargar variables de entorno desde .env
+load_dotenv()
 
 # Inicializar Tablas (Opcional: mejor usar migraciones como Alembic en prod)
 Base.metadata.create_all(bind=engine)
