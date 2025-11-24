@@ -169,107 +169,425 @@ class ChatService:
         -   **Siempre responde en español.**
         """
 
+    def _parse_month_year(self, message_lower: str) -> tuple:
+        """
+        Parsea meses y años en español usando regex.
+        Retorna (mes_num, año) o (None, None) si no se encuentra.
+        """
+        import re
+        
+        # Mapeo de meses en español
+        months = {
+            'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
+            'mayo': 5, 'junio': 6, 'julio': 7, 'agosto': 8,
+            'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12
+        }
+        
+        # Buscar patrón "mes año" o "mes de año"
+        for month_name, month_num in months.items():
+            pattern = rf'{month_name}\s+(?:de\s+)?(\d{{4}})'
+            match = re.search(pattern, message_lower)
+            if match:
+                year = int(match.group(1))
+                return (month_num, year)
+        
+        return (None, None)
+    
+    def _extract_device_id(self, message: str) -> str:
+        """
+        Extrae el device_id del mensaje usando regex.
+        """
+        import re
+        # Buscar números de 8 dígitos (típico para device_id)
+        match = re.search(r'\b\d{8}\b', message)
+        if match:
+            return match.group(0)
+        return None
+    
+    def _determine_query_type(self, message_lower: str) -> str:
+        """
+        Determina el tipo de consulta basado en palabras clave.
+        """
+        if any(word in message_lower for word in ['curva de carga', 'comparar curva', 'compara la curva', 'análisis de curva', 'comparación de curva']):
+            return 'load_curve_comparison'
+        elif any(word in message_lower for word in ['energía', 'consumo', 'kwh', 'consumió']):
+            return 'energy_consumption'
+        elif any(word in message_lower for word in ['potencia máxima', 'potencia maxima', 'máxima potencia']):
+            return 'max_power'
+        elif any(word in message_lower for word in ['anomalía', 'anomalia', 'desviación', 'desviacion']):
+            return 'anomalies'
+        else:
+            return 'other'
+
+    def _analyze_query_with_gemini(self, message: str) -> dict:
+        """
+        Usa Gemini para analizar la consulta del usuario y extraer la información relevante.
+        Si Gemini falla, usa un fallback con parsing local.
+        """
+        analysis_prompt = f"""
+        Analiza esta consulta del usuario sobre datos energéticos: "{message}"
+        
+        Extrae la siguiente información y responde ÚNICAMENTE en formato JSON:
+        {{
+            "query_type": "energy_consumption" | "max_power" | "load_curve_comparison" | "anomalies" | "other",
+            "device_id": "ID del medidor si se menciona, sino null",
+            "start_date": "fecha de inicio en formato YYYY-MM-DD si se puede determinar, sino null",
+            "end_date": "fecha de fin en formato YYYY-MM-DD si se puede determinar, sino null", 
+            "period_description": "descripción del período mencionado (ej: 'agosto 2024', 'último mes')",
+            "additional_params": {{"cualquier otro parámetro relevante como año base, umbrales, etc."}}
+        }}
+        
+        Reglas:
+        - Si se menciona un mes y año (ej: "agosto 2024"), calcula las fechas de inicio y fin del mes
+        - Si se menciona "último lunes", "primer martes", etc., trata de calcular la fecha específica
+        - Si no hay suficiente información, devuelve null en los campos correspondientes
+        - Los meses en español deben convertirse a números: enero=01, febrero=02, marzo=03, abril=04, mayo=05, junio=06, julio=07, agosto=08, septiembre=09, octubre=10, noviembre=11, diciembre=12
+        - Para comparaciones de curva de carga, identifica el query_type como "load_curve_comparison" y extrae:
+          * start_date: fecha específica del día a analizar (no un rango)
+          * additional_params.base_year: año base para la comparación promedio
+        
+        Ejemplos:
+        - "¿Cuánta energía consumió el medidor 36075003 en agosto 2024?" → query_type: "energy_consumption", start_date: "2024-08-01", end_date: "2024-08-31"
+        - "Consumo del medidor 123 el 15 de marzo de 2025" → query_type: "energy_consumption", start_date: "2025-03-15", end_date: "2025-03-15"
+        - "Compara la curva de carga del 20 de octubre de 2025 con el promedio de 2024 para el medidor 36075003" → query_type: "load_curve_comparison", device_id: "36075003", start_date: "2025-10-20", additional_params: {{"base_year": 2024}}
+        """
+        
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=analysis_prompt
+            )
+            
+            response_text = response.text.strip()
+            
+            # Limpiar la respuesta si tiene markdown
+            if response_text.startswith('```json'):
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif response_text.startswith('```'):
+                response_text = response_text.split('```')[1].strip()
+            
+            # Parsear JSON
+            import json
+            analysis = json.loads(response_text)
+            return analysis
+            
+        except Exception as e:
+            print(f"Error analyzing query with Gemini: {e}")
+            print("Using local fallback parser...")
+            
+            # FALLBACK: Usar parsing local si Gemini falla
+            message_lower = message.lower()
+            
+            # Extraer device_id
+            device_id = self._extract_device_id(message)
+            
+            # Determinar tipo de consulta
+            query_type = self._determine_query_type(message_lower)
+            
+            # Inicializar variables
+            start_date = None
+            end_date = None
+            period_description = None
+            additional_params = {}
+            
+            # Lógica específica por tipo de consulta
+            if query_type == 'load_curve_comparison':
+                # Para curvas de carga, buscar fecha específica y año base
+                import re
+                from datetime import datetime
+                
+                # Buscar fecha específica (ej: "20 de octubre de 2025", "2025-10-20")
+                # Patrón: DD de MES de AAAA
+                months_map = {
+                    'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
+                    'mayo': 5, 'junio': 6, 'julio': 7, 'agosto': 8,
+                    'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12
+                }
+                
+                date_pattern = r'(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})'
+                date_match = re.search(date_pattern, message_lower)
+                
+                if date_match:
+                    day = int(date_match.group(1))
+                    month_name = date_match.group(2)
+                    year = int(date_match.group(3))
+                    
+                    if month_name in months_map:
+                        month = months_map[month_name]
+                        start_date = f"{year}-{month:02d}-{day:02d}"
+                        period_description = f"{day} de {month_name} de {year}"
+                
+                # Buscar año base (ej: "año 2024", "promedio 2024", "año base 2024")
+                base_year_pattern = r'(?:año\s+base\s+|promedio\s+(?:del\s+)?año\s+|año\s+)?(\d{4})'
+                base_year_matches = re.findall(base_year_pattern, message_lower)
+                
+                if base_year_matches:
+                    # Si hay múltiples años, el último suele ser el año base
+                    for year_str in base_year_matches:
+                        year_int = int(year_str)
+                        # El año base suele ser diferente al año de la fecha analizada
+                        if start_date and year_str not in start_date:
+                            additional_params['base_year'] = year_int
+                            break
+                    
+                    # Si no encontramos un año diferente, usar el último
+                    if 'base_year' not in additional_params and base_year_matches:
+                        additional_params['base_year'] = int(base_year_matches[-1])
+            
+            else:
+                # Para otros tipos de consulta, parsear mes y año normalmente
+                month_num, year = self._parse_month_year(message_lower)
+                
+                if month_num and year:
+                    # Calcular inicio y fin del mes
+                    from calendar import monthrange
+                    last_day = monthrange(year, month_num)[1]
+                    start_date = f"{year}-{month_num:02d}-01"
+                    end_date = f"{year}-{month_num:02d}-{last_day:02d}"
+                    
+                    # Obtener nombre del mes para la descripción
+                    months_names = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                                  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+                    period_description = f"{months_names[month_num]} {year}"
+            
+            return {
+                "query_type": query_type,
+                "device_id": device_id,
+                "start_date": start_date,
+                "end_date": end_date,
+                "period_description": period_description,
+                "additional_params": additional_params
+            }
+
+    def _execute_energy_consumption_query(self, device_id: str, start_date: str, end_date: str, period_description: str = None) -> dict:
+        """
+        Ejecuta una consulta de consumo de energía y formatea la respuesta.
+        """
+        try:
+            result = self.energy_service.repo.get_total_energy_in_period(
+                device_id=device_id,
+                start_date=start_date,
+                end_date=end_date
+            )
+            
+            if result:
+                # Determinar si es un día o un período
+                is_single_day = start_date == end_date
+                period_text = period_description or f"{start_date} a {end_date}"
+                
+                if is_single_day:
+                    title = f"📊 **Energía registrada el {start_date} para el medidor {device_id}:**"
+                else:
+                    title = f"📊 **Energía registrada en {period_text} para el medidor {device_id}:**"
+                
+                return {
+                    "response": f"{title}\n\n"
+                              f"• **Energía total:** {result.get('total_energy_kwh', 'N/A')} kWh\n"
+                              f"• **Período:** {result.get('start_date', 'N/A')} a {result.get('end_date', 'N/A')}\n"
+                              f"• **Número de lecturas:** {result.get('reading_count', 'N/A')}\n"
+                              f"• **Potencia promedio:** {result.get('average_power_kw', 'N/A'):.2f} kW\n"
+                              f"• **Días del período:** {result.get('period_days', 'N/A')}\n\n"
+                              f"*Nota: Este valor representa la suma de todas las lecturas kwhd disponibles en la base de datos para el período especificado.*",
+                    "parameters": {
+                        'device_id': device_id, 
+                        'start_date': start_date, 
+                        'end_date': end_date,
+                        'period_description': period_description
+                    },
+                    "type": "total_energy"
+                }
+            else:
+                return {
+                    "response": f"❌ No se encontraron datos de energía para el medidor {device_id} en el período {period_description or f'{start_date} a {end_date}'}.",
+                    "parameters": None,
+                    "type": "error"
+                }
+                
+        except Exception as e:
+            return {
+                "response": f"❌ Error al consultar los datos de energía: {str(e)}",
+                "parameters": None,
+                "type": "error"
+            }
+
     def ask_gemini(self, message: str, context: dict = None) -> dict:
         """
-        Gestiona una conversación con el usuario, ejecutando herramientas cuando sea necesario
-        y devolviendo resultados reales de la base de datos.
+        Gestiona una conversación con el usuario usando Gemini para analizar consultas de manera inteligente.
         """
         try:
             print(f"Processing user message: '{message}'")
             
-            # Análisis simple del mensaje para determinar qué herramienta ejecutar
-            message_lower = message.lower()
+            # Usar Gemini para analizar la consulta del usuario
+            analysis = self._analyze_query_with_gemini(message)
+            print(f"Query analysis: {analysis}")
             
-            # Detectar solicitud de consumo total para un día específico
-            if any(word in message_lower for word in ['energía', 'consumo', 'kwh']) and '36075003' in message:
-                print("Detected energy consumption query for device 36075003")
+            # Ejecutar la acción basada en el análisis
+            if analysis.get("query_type") == "energy_consumption":
+                device_id = analysis.get("device_id")
+                start_date = analysis.get("start_date")
+                end_date = analysis.get("end_date")
+                period_description = analysis.get("period_description")
                 
-                # Extraer fecha del mensaje - día específico
-                if '1 de noviembre de 2025' in message_lower or '01-11-2025' in message_lower:
-                    result = self.energy_service.repo.get_total_energy_in_period(
-                        device_id='36075003',
-                        start_date='2025-11-01',
-                        end_date='2025-11-01'
-                    )
-                    if result:
+                if device_id and start_date and end_date:
+                    return self._execute_energy_consumption_query(device_id, start_date, end_date, period_description)
+                else:
+                    # Pedir aclaración si falta información
+                    missing_info = []
+                    if not device_id:
+                        missing_info.append("el ID del medidor")
+                    if not start_date or not end_date:
+                        missing_info.append("las fechas específicas")
+                    
+                    return {
+                        "response": f"🤖 **EnergyApp Assistant:**\n\n"
+                                  f"Para consultar el consumo de energía, necesito que especifiques {' y '.join(missing_info)}.\n\n"
+                                  f"Por ejemplo: '¿Cuánta energía consumió el medidor 36075003 en agosto 2024?'",
+                        "parameters": analysis,
+                        "type": "clarification_needed"
+                    }
+            
+            elif analysis.get("query_type") == "max_power":
+                # Lógica para potencia máxima
+                device_id = analysis.get("device_id")
+                start_date = analysis.get("start_date")
+                end_date = analysis.get("end_date")
+                
+                if device_id and start_date and end_date:
+                    try:
+                        result = self.energy_service.repo.get_max_power_in_period(device_id, start_date, end_date)
+                        if result:
+                            return {
+                                "response": f"⚡ **Potencia máxima para el medidor {device_id}:**\n\n"
+                                          f"• **Potencia máxima:** {result.get('max_power_kw', 'N/A'):.2f} kW\n"
+                                          f"• **Fecha y hora:** {result.get('datetime', 'N/A')}\n"
+                                          f"• **Período analizado:** {result.get('start_date', 'N/A')} a {result.get('end_date', 'N/A')}",
+                                "parameters": analysis,
+                                "type": "max_power"
+                            }
+                        else:
+                            return {
+                                "response": f"❌ No se encontraron datos de potencia para el medidor {device_id} en el período especificado.",
+                                "parameters": None,
+                                "type": "error"
+                            }
+                    except Exception as e:
                         return {
-                            "response": f"📊 **Energía registrada el 1 de noviembre de 2025 para el medidor 36075003:**\n\n"
-                                      f"• **Energía total:** {result.get('total_energy_kwh', 'N/A')} kWh\n"
-                                      f"• **Período:** {result.get('period_start', 'N/A')} a {result.get('period_end', 'N/A')}\n"
-                                      f"• **Número de lecturas:** {result.get('readings_count', 'N/A')}",
-                            "parameters": {'device_id': '36075003', 'start_date': '2025-11-01', 'end_date': '2025-11-01'},
-                            "type": "total_energy"
-                        }
-                    else:
-                        return {
-                            "response": "❌ No se encontraron datos de energía para el medidor 36075003 en la fecha especificada (1 de noviembre de 2025).",
+                            "response": f"❌ Error al consultar la potencia máxima: {str(e)}",
                             "parameters": None,
                             "type": "error"
                         }
-                
-                # Extraer fecha del mensaje - mes completo
-                elif 'mes de noviembre de 2025' in message_lower or 'noviembre de 2025' in message_lower:
-                    result = self.energy_service.repo.get_total_energy_in_period(
-                        device_id='36075003',
-                        start_date='2025-11-01',
-                        end_date='2025-11-30'
-                    )
-                    if result:
-                        return {
-                            "response": f"📊 **Energía registrada en noviembre de 2025 para el medidor 36075003:**\n\n"
-                                      f"• **Energía total:** {result.get('total_energy_kwh', 'N/A')} kWh\n"
-                                      f"• **Período:** {result.get('period_start', 'N/A')} a {result.get('period_end', 'N/A')}\n"
-                                      f"• **Número de lecturas:** {result.get('readings_count', 'N/A')}\n\n"
-                                      f"*Nota: Este valor representa la suma de todas las lecturas kwhd disponibles en la tabla m_lecturas para el período completo.*",
-                            "parameters": {'device_id': '36075003', 'start_date': '2025-11-01', 'end_date': '2025-11-30'},
-                            "type": "total_energy"
-                        }
-                    else:
-                        return {
-                            "response": "❌ No se encontraron datos de energía para el medidor 36075003 en el mes de noviembre de 2025.",
-                            "parameters": None,
-                            "type": "error"
-                        }
+                else:
+                    return {
+                        "response": "🤖 **EnergyApp Assistant:**\n\nPara consultar la potencia máxima, necesito el ID del medidor y las fechas específicas.",
+                        "parameters": analysis,
+                        "type": "clarification_needed"
+                    }
             
-            # Detectar comparación de curvas de carga
-            elif 'comparar curva de carga' in message_lower or 'curva de carga' in message_lower:
-                print("Detected load curve comparison query")
-                if '20 de octubre de 2025' in message_lower and '2024' in message_lower:
+            elif analysis.get("query_type") == "load_curve_comparison":
+                # Lógica para comparación de curvas de carga
+                device_id = analysis.get("device_id")
+                target_date = analysis.get("start_date")  # Fecha específica a analizar
+                base_year = analysis.get("additional_params", {}).get("base_year")
+                
+                # Si no hay base_year en additional_params, buscar en el mensaje
+                if not base_year:
+                    import re
+                    # Buscar año base mencionado (ej: "año 2024", "año base 2024", "promedio 2024")
+                    match = re.search(r'(?:año\s+base\s+|promedio\s+|año\s+)?(\d{4})', message.lower())
+                    if match:
+                        base_year = int(match.group(1))
+                
+                if device_id and target_date and base_year:
                     try:
                         result = self.energy_service.analyze_day(
-                            device_id='36075003',
-                            target_date_str='2025-10-20',
-                            base_year=2024
+                            device_id=device_id,
+                            target_date_str=target_date,
+                            base_year=base_year
                         )
+                        
+                        # Extraer información clave del análisis
+                        estado = result.get('analysis', {}).get('estado_general', 'N/A')
+                        resumen = result.get('analysis', {}).get('resumen', 'Análisis completado')
+                        anomalias = result.get('analysis', {}).get('anomalias', [])
+                        recomendacion = result.get('analysis', {}).get('recomendacion', 'N/A')
+                        
+                        # Formatear anomalías
+                        anomalias_text = ""
+                        if anomalias and isinstance(anomalias, list):
+                            anomalias_text = "\n\n**🔍 Anomalías detectadas:**\n"
+                            for i, anomalia in enumerate(anomalias, 1):
+                                if isinstance(anomalia, dict):
+                                    periodo = anomalia.get('periodo', 'N/A')
+                                    descripcion = anomalia.get('descripcion', 'N/A')
+                                    anomalias_text += f"{i}. **{periodo}:** {descripcion}\n"
+                                else:
+                                    anomalias_text += f"{i}. {anomalia}\n"
+                        elif not anomalias:
+                            anomalias_text = "\n\n**✅ No se detectaron anomalías significativas.**"
+                        
                         return {
-                            "response": f"📈 **Comparación de curva de carga completada:**\n\n"
-                                      f"• **Medidor:** 36075003\n"
-                                      f"• **Fecha analizada:** 20 de octubre de 2025\n"
-                                      f"• **Año base:** 2024\n"
-                                      f"• **Estado general:** {result.get('analysis', {}).get('estado_general', 'N/A')}\n\n"
-                                      f"Los datos detallados de la comparación están disponibles en el sistema.",
-                            "parameters": {'device_id': '36075003', 'target_date': '2025-10-20', 'base_year': 2024},
-                            "type": "load_curve_comparison"
+                            "response": f"📈 **Comparación de curva de carga completada**\n\n"
+                                      f"• **Medidor:** {device_id}\n"
+                                      f"• **Fecha analizada:** {target_date}\n"
+                                      f"• **Año base (promedio):** {base_year}\n"
+                                      f"• **Estado general:** {estado}\n\n"
+                                      f"**📊 Resumen del análisis:**\n{resumen}\n"
+                                      f"{anomalias_text}\n"
+                                      f"**💡 Recomendación:**\n{recomendacion}",
+                            "parameters": {
+                                'device_id': device_id,
+                                'target_date': target_date,
+                                'base_year': base_year
+                            },
+                            "type": "load_curve_comparison",
+                            "full_analysis": result
+                        }
+                    except ValueError as e:
+                        return {
+                            "response": f"❌ **Error al comparar curvas de carga:** {str(e)}\n\n"
+                                      f"Verifica que:\n"
+                                      f"• El medidor {device_id} tenga datos para la fecha {target_date}\n"
+                                      f"• Existan datos históricos del año base {base_year}",
+                            "parameters": None,
+                            "type": "error"
                         }
                     except Exception as e:
                         return {
-                            "response": f"❌ Error al comparar curvas de carga: {str(e)}",
+                            "response": f"❌ **Error inesperado al comparar curvas de carga:** {str(e)}",
                             "parameters": None,
                             "type": "error"
                         }
+                else:
+                    # Pedir aclaración si falta información
+                    missing_info = []
+                    if not device_id:
+                        missing_info.append("el ID del medidor")
+                    if not target_date:
+                        missing_info.append("la fecha específica a analizar")
+                    if not base_year:
+                        missing_info.append("el año base para la comparación")
+                    
+                    return {
+                        "response": f"🤖 **EnergyApp Assistant:**\n\n"
+                                  f"Para comparar curvas de carga, necesito que especifiques {', '.join(missing_info)}.\n\n"
+                                  f"Por ejemplo: 'Compara la curva de carga del 20 de octubre de 2025 con el promedio del año 2024 para el medidor 36075003'",
+                        "parameters": analysis,
+                        "type": "clarification_needed"
+                    }
             
-            # Respuesta por defecto para consultas no reconocidas
-            return {
-                "response": "🤖 **EnergyApp Assistant:**\n\n"
-                          "Puedo ayudarte con consultas sobre:\n"
-                          "• Consumo de energía por fecha y medidor (incluyendo meses completos)\n"
-                          "• Comparación de curvas de carga\n"
-                          "• Potencia máxima\n"
-                          "• Anomalías de consumo\n\n"
-                          "Por favor, especifica el medidor y las fechas que deseas consultar.",
-                "parameters": None,
-                "type": "general"
-            }
+            else:
+                # Respuesta por defecto con sugerencias inteligentes
+                return {
+                    "response": "🤖 **EnergyApp Assistant:**\n\n"
+                              "Puedo ayudarte con consultas sobre:\n"
+                              "• **Consumo de energía:** 'Energía consumida por el medidor 36075003 en agosto 2024'\n"
+                              "• **Potencia máxima:** 'Potencia máxima del medidor 36075003 en septiembre 2024'\n"
+                              "• **Comparación de curvas de carga:** 'Comparar curva del 15 de octubre con año base 2023'\n"
+                              "• **Anomalías de consumo:** 'Medidores con anomalías en julio 2024'\n\n"
+                              "Por favor, especifica el medidor y las fechas que deseas consultar.",
+                    "parameters": analysis,
+                    "type": "general"
+                }
 
         except Exception as e:
             print(f"[ERROR] An unexpected error occurred in ChatService: {str(e)}")

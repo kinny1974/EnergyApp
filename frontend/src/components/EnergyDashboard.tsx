@@ -640,7 +640,30 @@ const EnergyDashboard: React.FC = () => {
                             if (typeof a === 'string') {
                               return <li key={i}>{a}</li>;
                             } else if (a && typeof a === 'object') {
-                              return <li key={i}>{a.periodo || 'Período'}: {a.descripcion || 'Descripción no disponible'}</li>;
+                              // Ensure we're rendering strings, not objects
+                              // Handle both formato {periodo, descripcion} and nested objects
+                              let displayText = '';
+                              
+                              if (a.periodo) {
+                                displayText += `${a.periodo}: `;
+                              }
+                              
+                              if (a.descripcion) {
+                                // Si descripcion es un objeto, convertirlo a string
+                                if (typeof a.descripcion === 'object') {
+                                  displayText += JSON.stringify(a.descripcion);
+                                } else {
+                                  displayText += String(a.descripcion);
+                                }
+                              } else if (a.cambio || a.descripcion) {
+                                // Formato alternativo con cambio y descripcion
+                                displayText += `${a.cambio || ''} - ${a.descripcion || ''}`;
+                              } else {
+                                // Si no tiene estructura conocida, convertir todo el objeto
+                                displayText = JSON.stringify(a);
+                              }
+                              
+                              return <li key={i}>{displayText || 'Anomalía detectada'}</li>;
                             } else {
                               return <li key={i}>Anomalía no válida</li>;
                             }
