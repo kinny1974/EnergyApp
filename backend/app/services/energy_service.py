@@ -7,52 +7,109 @@ from app.data.models import MLectura, Medidor
 from app.services.observers import Subject, AuditLoggerObserver, CriticalAlertObserver
 
 class EnergyService(Subject):
-    def find_outlier_devices(self, base_year: int, start_date: str, end_date: str, threshold: float):
+    def find_outlier_devices(self, base_year: int, start_date: str, end_date: str, threshold: float = 20.0):
         """
         Busca medidores con desviaciones mayores al umbral en el rango de fechas dado, usando el año base.
+        Versión optimizada: consulta en lote y procesamiento eficiente.
         Devuelve una lista de dicts con device_id, fecha, desviación máxima, curva de carga diaria.
         """
         from datetime import datetime, timedelta
         start = pd.to_datetime(start_date)
         end = pd.to_datetime(end_date)
+        
+        print(f"[INFO] Buscando anomalías para {start_date} a {end_date} (umbral: {threshold}%)")
+        
+        # Obtener todos los medidores activos
         medidores = self.repo.get_active_medidores()
+        print(f"[INFO] Analizando {len(medidores)} medidores...")
+        
         resultados = []
         dias = pd.date_range(start, end, freq='D')
-        for medidor in medidores:
-            for dia in dias:
-                # Obtener lecturas reales del día
-                data_orm = self.repo.get_readings_by_date(medidor.deviceid, dia)
-                if not data_orm:
+        
+        # Optimización 1: Consultar todas las lecturas del período de una vez por medidor
+        for idx, medidor in enumerate(medidores, 1):
+            if idx % 10 == 0:
+                print(f"[PROGRESS] Procesados {idx}/{len(medidores)} medidores...")
+            
+            try:
+                # Obtener todas las lecturas del período en una sola consulta
+                all_readings = self.repo.get_readings_range(
+                    medidor.deviceid, 
+                    start, 
+                    end + timedelta(days=1)
+                )
+                
+                if not all_readings:
                     continue
-                df_real = pd.DataFrame([{'time_str': d.fecha.strftime('%H:%M'), 'value': d.kwhd} for d in data_orm])
-                # Obtener baseline del año base
+                
+                # Convertir a DataFrame
+                df_all = pd.DataFrame([{
+                    'fecha': d.fecha,
+                    'time_str': d.fecha.strftime('%H:%M'),
+                    'value': d.kwhd,
+                    'date': d.fecha.date()
+                } for d in all_readings])
+                
+                # Obtener baseline del año base (solo una vez por medidor)
                 hist_orm = self.repo.get_historical_year_data(medidor.deviceid, base_year)
                 if not hist_orm:
                     continue
+                
                 df_hist = pd.DataFrame([{'timestamp': d.fecha, 'val': d.kwhd} for d in hist_orm])
-                target_day_name = dia.day_name()
-                baseline_day = self._calculate_baseline(df_hist, target_day_name)
-                if baseline_day.empty:
-                    continue
-                merged = pd.merge(df_real, baseline_day[['time_str', 'mean', 'std']], on='time_str', how='inner')
-                if merged.empty or 'mean' not in merged.columns:
-                    continue
-                # Calcular desviaciones
-                merged['percentage_diff'] = merged.apply(lambda row: ((row['value'] - row['mean']) / row['mean']) * 100 if row['mean'] != 0 else float('inf'), axis=1)
-                max_dev = merged['percentage_diff'].abs().max()
-                if max_dev >= threshold:
-                    resultados.append({
-                        'device_id': medidor.deviceid,
-                        'fecha': dia.strftime('%Y-%m-%d'),
-                        'max_deviation': max_dev,
-                        'chart_data': merged.to_dict(orient='records'),
-                        'medidor_info': {
-                            'description': medidor.description,
-                            'devicetype': medidor.devicetype,
-                            'customerid': medidor.customerid,
-                            'usergroup': medidor.usergroup
-                        }
-                    })
+                
+                # Procesar cada día
+                for dia in dias:
+                    target_day_name = dia.day_name()
+                    
+                    # Filtrar lecturas del día
+                    df_dia = df_all[df_all['date'] == dia.date()].copy()
+                    if df_dia.empty:
+                        continue
+                    
+                    # Calcular baseline para este día de la semana
+                    baseline_day = self._calculate_baseline(df_hist, target_day_name)
+                    if baseline_day.empty:
+                        continue
+                    
+                    # Merge con baseline
+                    merged = pd.merge(
+                        df_dia[['time_str', 'value']], 
+                        baseline_day[['time_str', 'mean', 'std']], 
+                        on='time_str', 
+                        how='inner'
+                    )
+                    
+                    if merged.empty or 'mean' not in merged.columns:
+                        continue
+                    
+                    # Calcular desviaciones
+                    merged['percentage_diff'] = merged.apply(
+                        lambda row: ((row['value'] - row['mean']) / row['mean']) * 100 
+                        if row['mean'] != 0 else float('inf'), 
+                        axis=1
+                    )
+                    
+                    max_dev = merged['percentage_diff'].abs().max()
+                    
+                    if max_dev >= threshold:
+                        resultados.append({
+                            'device_id': medidor.deviceid,
+                            'fecha': dia.strftime('%Y-%m-%d'),
+                            'max_deviation': max_dev,
+                            'chart_data': merged.to_dict(orient='records'),
+                            'medidor_info': {
+                                'description': medidor.description,
+                                'devicetype': medidor.devicetype,
+                                'customerid': medidor.customerid,
+                                'usergroup': medidor.usergroup
+                            }
+                        })
+            
+            except Exception as e:
+                print(f"[ERROR] Error procesando medidor {medidor.deviceid}: {str(e)}")
+                continue
+        
+        print(f"[INFO] Análisis completado. {len(resultados)} anomalías detectadas.")
         return resultados
     def __init__(self, repository: EnergyRepository):
         super().__init__()
@@ -129,27 +186,122 @@ class EnergyService(Subject):
         sample_data = merged_df.set_index('time_str')[['value', 'mean']].to_string()
 
         prompt = f"""
-        Actúa como un ingeniero electricista experto en demanda energética.
-        Analiza el consumo del dispositivo: {device_id} ({medidor.description}) en la fecha: {target_date_str} ({target_day_name}).
-        Los valores de 'value' y 'mean' representan energía activa en kWh. Al construir la curva de carga diaria, esto equivale a un valor estimado de la carga en kW.
+<role>
+Actúa como un ingeniero electricista especializado en análisis de demanda energética con 15 años de experiencia.
+</role>
 
-        Información del medidor:
-        - Tipo: {medidor.devicetype}
-        - Descripción: {medidor.description}
-        - Cliente: {medidor.customerid}
-        - Grupo: {medidor.usergroup}
+<context>
+<meter_info>
+  ID: {device_id}
+  Descripción: {medidor.description}
+  Tipo: {medidor.devicetype}
+  Cliente: {medidor.customerid}
+  Grupo: {medidor.usergroup}
+</meter_info>
 
-        Datos (Comparativa Consumo Real 'value' vs Esperado 'mean'):
-        {sample_data}
+<analysis_date>
+  Fecha: {target_date_str}
+  Día: {target_day_name}
+</analysis_date>
 
-        El estado general determinado por el sistema es: {calculated_estado_general}. Basado en este estado y los datos, genera un reporte técnico estrictamente en formato JSON con estos campos:
-        - resumen: Descripción técnica del comportamiento diario.
-        - habitos: Identificación de cambios de patrones (ej. encendido temprano).
-        - anomalias: Lista de objetos, cada uno con "periodo" (ej: "14:00-15:00") y "descripcion" del evento.
-        - recomendacion: Acción sugerida para operación o mantenimiento.
-        - estado_general: Mantén el estado general como "{calculated_estado_general}" en tu respuesta.
-        
-        IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional antes o después.
+<system_classification>
+  Estado Automático: {calculated_estado_general}
+  Criterio:
+    - NORMAL: Desviaciones < ±20%
+    - ALERTA: Desviaciones entre ±21% y ±70%
+    - CRITICO: Desviaciones > ±71%
+</system_classification>
+</context>
+
+<technical_context>
+Unidades:
+  - 'value': Energía real medida en kWh por intervalo
+  - 'mean': Energía esperada promedio histórica en kWh
+  - Curva de carga: Representa potencia aproximada en kW
+  - Intervalo de medición: 15 minutos (típicamente)
+</technical_context>
+
+<data>
+Comparativa Consumo Real vs Esperado:
+{sample_data}
+</data>
+
+<task>
+Genera un análisis técnico DETALLADO en formato JSON con los siguientes campos:
+</task>
+
+<output_schema>
+{{
+  "resumen": "String: Descripción técnica de 3-5 oraciones sobre el comportamiento diario global. Incluye consumo total, patrón horario general, y comparación con histórico.",
+  
+  "habitos": "String: Identificación de cambios de patrones de consumo. Ejemplos: 'Encendido de carga 30 minutos más temprano de lo habitual', 'Pico vespertino desplazado 1 hora'.",
+  
+  "anomalias": [
+    {{
+      "periodo": "HH:MM-HH:MM",
+      "descripcion": "Descripción técnica del evento anómalo, magnitud de desviación, y causa potencial"
+    }}
+  ],
+  
+  "recomendacion": "String: Acciones específicas sugeridas para operación o mantenimiento. Priorizar según criticidad.",
+  
+  "estado_general": "{calculated_estado_general}"
+}}
+</output_schema>
+
+<analysis_methodology>
+STEP 1: Calcular métricas globales
+  - Consumo total del día = sum(value)
+  - Consumo esperado = sum(mean)
+  - Desviación global = ((total_real - total_esperado) / total_esperado) * 100
+
+STEP 2: Identificar períodos anómalos
+  - FOR cada intervalo:
+      desviación_punto = ((value - mean) / mean) * 100
+      IF |desviación_punto| > 20% THEN marcar como anómalo
+
+STEP 3: Agrupar anomalías
+  - Consolidar intervalos consecutivos anómalos en un solo período
+  - Describir la duración y magnitud de cada grupo
+
+STEP 4: Analizar patrones
+  - Comparar horas de pico real vs esperadas
+  - Identificar desplazamientos temporales
+  - Detectar cargas adicionales o desconexiones
+</analysis_methodology>
+
+<examples>
+EXAMPLE 1 - Estado NORMAL:
+{{
+  "resumen": "El circuito operó dentro de parámetros normales con consumo de 21,106 kWh, solo 3% inferior al esperado. La curva mantuvo el patrón histórico.",
+  "habitos": "Ligero adelanto del encendido matutino (6:00 vs 6:30 histórico).",
+  "anomalias": [],
+  "recomendacion": "Continuar con monitoreo estándar. El consumo reducido puede indicar mejoras en eficiencia.",
+  "estado_general": "NORMAL"
+}}
+
+EXAMPLE 2 - Estado ALERTA:
+{{
+  "resumen": "El medidor presentó desviaciones moderadas con consumo de 850 kWh vs 720 kWh esperado (+18% global).",
+  "habitos": "Carga adicional sostenida durante madrugada (02:00-05:00), no presente en patrón histórico.",
+  "anomalias": [
+    {{
+      "periodo": "02:15-05:00",
+      "descripcion": "Consumo nocturno elevado (+35%), de 15 kW a 20 kW. Posible nuevo turno o carga industrial."
+    }}
+  ],
+  "recomendacion": "1) Verificar cambios operativos en turno nocturno. 2) Considerar ajuste de baseline si patrón persiste 7+ días.",
+  "estado_general": "ALERTA"
+}}
+</examples>
+
+<output_constraints>
+- Responde ÚNICAMENTE con el objeto JSON válido
+- NO agregues texto antes o después del JSON
+- Mantén estado_general exactamente como: "{calculated_estado_general}"
+- Anomalías array PUEDE estar vacío [] si estado es NORMAL
+- Usa lenguaje técnico pero comprensible
+</output_constraints>
         """
 
         try:

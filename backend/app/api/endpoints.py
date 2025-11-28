@@ -242,6 +242,30 @@ def get_device_info(device_id: str, db: Session = Depends(get_db)):
     if not medidor:
         raise HTTPException(status_code=404, detail=f"Medidor {device_id} no encontrado")
     
+    # Incluir información de localidad si existe
+    localidad_info = None
+    if medidor.localidad:
+        municipio_info = None
+        if medidor.localidad.municipio:
+            departamento_info = None
+            if medidor.localidad.municipio.departamento:
+                departamento_info = {
+                    "id_dep": medidor.localidad.municipio.departamento.id_dep,
+                    "departamento": medidor.localidad.municipio.departamento.departamento
+                }
+            municipio_info = {
+                "id_mun": medidor.localidad.municipio.id_mun,
+                "municipio": medidor.localidad.municipio.municipio,
+                "departamento": departamento_info
+            }
+        localidad_info = {
+            "id_loc": medidor.localidad.id_loc,
+            "localidad": medidor.localidad.localidad,
+            "latitud": medidor.localidad.latitud,
+            "longitud": medidor.localidad.longitud,
+            "municipio": municipio_info
+        }
+    
     return {
         "deviceid": medidor.deviceid,
         "description": medidor.description,
@@ -250,7 +274,193 @@ def get_device_info(device_id: str, db: Session = Depends(get_db)):
         "usergroup": medidor.usergroup,
         "connectiontype": medidor.connectiontype,
         "id_loc": medidor.id_loc,
-        "id_cen": medidor.id_cen
+        "id_cen": medidor.id_cen,
+        "localidad": localidad_info
+    }
+
+# --- Endpoints para Localidades ---
+
+@router.get("/localidades")
+def get_localidades(db: Session = Depends(get_db)):
+    """Obtiene todas las localidades."""
+    repo = EnergyRepository(db)
+    localidades = repo.get_all_localidades()
+    return {
+        "localidades": [
+            {
+                "id_loc": l.id_loc,
+                "localidad": l.localidad,
+                "id_mun": l.id_mun,
+                "municipio": l.municipio.municipio if l.municipio else None,
+                "latitud": l.latitud,
+                "longitud": l.longitud
+            }
+            for l in localidades
+        ]
+    }
+
+@router.get("/localidades/search/{localidad_name}")
+def search_localidades(localidad_name: str, db: Session = Depends(get_db)):
+    """Busca localidades por nombre."""
+    repo = EnergyRepository(db)
+    localidades = repo.search_localidades_by_name(localidad_name)
+    return {
+        "localidades": [
+            {
+                "id_loc": l.id_loc,
+                "localidad": l.localidad,
+                "id_mun": l.id_mun,
+                "municipio": l.municipio.municipio if l.municipio else None,
+                "latitud": l.latitud,
+                "longitud": l.longitud
+            }
+            for l in localidades
+        ],
+        "count": len(localidades)
+    }
+
+@router.get("/localidades/{localidad_name}/medidores")
+def get_medidores_by_localidad(localidad_name: str, db: Session = Depends(get_db)):
+    """Obtiene todos los medidores de una localidad."""
+    repo = EnergyRepository(db)
+    medidores = repo.get_medidores_by_localidad(localidad_name)
+    return {
+        "medidores": [
+            {
+                "deviceid": m.deviceid,
+                "description": m.description,
+                "devicetype": m.devicetype,
+                "localidad": m.localidad.localidad if m.localidad else None,
+                "id_loc": m.id_loc
+            }
+            for m in medidores
+        ],
+        "count": len(medidores)
+    }
+
+# --- Endpoints para Municipios ---
+
+@router.get("/municipios")
+def get_municipios(db: Session = Depends(get_db)):
+    """Obtiene todos los municipios."""
+    repo = EnergyRepository(db)
+    municipios = repo.get_all_municipios()
+    return {
+        "municipios": [
+            {
+                "id_mun": m.id_mun,
+                "municipio": m.municipio,
+                "id_dep": m.id_dep,
+                "departamento": m.departamento.departamento if m.departamento else None
+            }
+            for m in municipios
+        ]
+    }
+
+@router.get("/municipios/search/{municipio_name}")
+def search_municipios(municipio_name: str, db: Session = Depends(get_db)):
+    """Busca municipios por nombre."""
+    repo = EnergyRepository(db)
+    municipios = repo.search_municipios_by_name(municipio_name)
+    return {
+        "municipios": [
+            {
+                "id_mun": m.id_mun,
+                "municipio": m.municipio,
+                "id_dep": m.id_dep,
+                "departamento": m.departamento.departamento if m.departamento else None
+            }
+            for m in municipios
+        ],
+        "count": len(municipios)
+    }
+
+@router.get("/municipios/{municipio_name}/medidores")
+def get_medidores_by_municipio(municipio_name: str, db: Session = Depends(get_db)):
+    """Obtiene todos los medidores de un municipio."""
+    repo = EnergyRepository(db)
+    medidores = repo.get_medidores_by_municipio(municipio_name)
+    return {
+        "medidores": [
+            {
+                "deviceid": m.deviceid,
+                "description": m.description,
+                "devicetype": m.devicetype,
+                "localidad": m.localidad.localidad if m.localidad else None,
+                "municipio": m.localidad.municipio.municipio if m.localidad and m.localidad.municipio else None
+            }
+            for m in medidores
+        ],
+        "count": len(medidores)
+    }
+
+# --- Endpoints para Departamentos ---
+
+@router.get("/departamentos")
+def get_departamentos(db: Session = Depends(get_db)):
+    """Obtiene todos los departamentos."""
+    repo = EnergyRepository(db)
+    departamentos = repo.get_all_departamentos()
+    return {
+        "departamentos": [
+            {
+                "id_dep": d.id_dep,
+                "departamento": d.departamento
+            }
+            for d in departamentos
+        ]
+    }
+
+@router.get("/departamentos/{departamento_name}/medidores")
+def get_medidores_by_departamento(departamento_name: str, db: Session = Depends(get_db)):
+    """Obtiene todos los medidores de un departamento."""
+    repo = EnergyRepository(db)
+    medidores = repo.get_medidores_by_departamento(departamento_name)
+    return {
+        "medidores": [
+            {
+                "deviceid": m.deviceid,
+                "description": m.description,
+                "devicetype": m.devicetype,
+                "localidad": m.localidad.localidad if m.localidad else None,
+                "municipio": m.localidad.municipio.municipio if m.localidad and m.localidad.municipio else None,
+                "departamento": m.localidad.municipio.departamento.departamento if m.localidad and m.localidad.municipio and m.localidad.municipio.departamento else None
+            }
+            for m in medidores
+        ],
+        "count": len(medidores)
+    }
+
+# --- Endpoint de búsqueda general ---
+
+@router.get("/search/medidores/{search_term}")
+def search_medidores(search_term: str, db: Session = Depends(get_db)):
+    """
+    Búsqueda flexible de medidores por:
+    - Device ID
+    - Descripción del medidor
+    - Nombre de localidad
+    - Nombre de municipio
+    - Nombre de departamento
+    """
+    repo = EnergyRepository(db)
+    medidores = repo.search_medidores(search_term)
+    return {
+        "medidores": [
+            {
+                "deviceid": m.deviceid,
+                "description": m.description,
+                "devicetype": m.devicetype,
+                "customerid": m.customerid,
+                "localidad": m.localidad.localidad if m.localidad else None,
+                "municipio": m.localidad.municipio.municipio if m.localidad and m.localidad.municipio else None,
+                "departamento": m.localidad.municipio.departamento.departamento if m.localidad and m.localidad.municipio and m.localidad.municipio.departamento else None,
+                "id_loc": m.id_loc
+            }
+            for m in medidores
+        ],
+        "count": len(medidores),
+        "search_term": search_term
     }
 
 @router.post("/analyze")

@@ -1,0 +1,112 @@
+### **Presentación para Desarrolladores: Onboarding al Proyecto "Análisis Inteligente de la Demanda"**
+
+**Diapositiva 1: Título**
+*   **Título:** Onboarding de Desarrolladores
+*   **Proyecto:** Análisis Inteligente de la Demanda ⚡🤖
+*   **Objetivo:** Guía de inicio rápido para entender la arquitectura, el stack tecnológico y las convenciones del proyecto.
+
+**Diapositiva 2: Visión del Producto**
+*   **Título:** ¿Qué estamos construyendo?
+*   **Descripción:** Una aplicación web para la gestión y análisis inteligente de consumo energético.
+*   **Núcleo del Negocio:** Comparamos curvas de carga reales contra comportamientos históricos usando IA (Google Gemini) para detectar anomalías y cambios de hábitos automáticamente, generando valor a través del ahorro y el mantenimiento predictivo.
+
+**Diapositiva 3: Arquitectura del Sistema (N-Tier)**
+*   **Título:** Vista de 10,000 pies
+*   **Diagrama:**
+    *   Caja 1 (Izquierda): **Frontend (Capa de Presentación)** - `React, Vite, TypeScript` - Responsable de la interacción con el usuario y la visualización de datos.
+    *   Flecha: `(API Request)`
+    *   Caja 2 (Centro): **Backend (Capa de Negocio)** - `FastAPI, Python` - Orquesta la lógica de negocio, el análisis de datos y la comunicación con servicios externos (IA) y la base de datos.
+    *   Flecha: `(SQL Query)`
+    *   Caja 3 (Derecha): **Database (Capa de Datos)** - `PostgreSQL` - Almacenamiento persistente de las lecturas de consumo.
+*   **Principio Clave:** Separación de responsabilidades. El frontend no sabe de lógica de negocio, el backend no sabe de renderizado.
+
+**Diapositiva 4: Tech Stack - Backend**
+*   **Título:** El Cerebro: Python + FastAPI
+*   **Framework:** **FastAPI** - Un microframework moderno y asíncrono. Ideal para APIs de alto rendimiento.
+*   **Librerías Clave:**
+    *   `SQLAlchemy`: Nuestro ORM. Abstrae la comunicación con PostgreSQL. Ver `backend/app/data/database.py`.
+    *   `pandas`: Fundamental para la manipulación de datos, especialmente en la carga de CSV y el procesamiento de series temporales en `energy_service`.
+    *   `google-generativeai`: El cliente para interactuar con la API de Gemini. Ver `backend/app/services/chat_service.py`.
+    *   `pydantic`: Usado por FastAPI para la validación de datos en los endpoints y la gestión de la configuración (`core/config.py`).
+*   **Base de Datos:** **PostgreSQL**. La tabla principal es `m_lecturas`. El modelo está en `app/data/models.py`.
+
+**Diapositiva 5: Tech Stack - Frontend**
+*   **Título:** La Cara Visible: React + TypeScript
+*   **Librería/Framework:** **React** con **Vite** como empaquetador y servidor de desarrollo. Vite ofrece HMR (Hot Module Replacement) ultra-rápido.
+*   **Lenguaje:** **TypeScript** - Usamos tipado estático para un código más robusto y mantenible.
+*   **Librerías Clave:**
+    *   `recharts`: Para las gráficas interactivas del dashboard (`EnergyDashboard.tsx`).
+    *   `tailwindcss`: Framework CSS utility-first para un diseño rápido y consistente.
+    *   `lucide-react`: Paquete de iconos.
+    *   `axios` (o `fetch` nativo): Para las llamadas a la API del backend, gestionado en `frontend/src/services/api.ts`.
+
+**Diapositiva 6: Explorando el Código: Estructura del Backend**
+*   **Título:** ¿Dónde está qué? (Backend)
+*   **Directorio Raíz:** `/backend/app/`
+    *   `main.py`: Punto de entrada de la aplicación. Monta los routers y la configuración inicial de FastAPI.
+    *   `api/endpoints.py`: Define todos los endpoints de la API (`/load_data`, `/analyze`, etc.). La puerta de entrada a la lógica de negocio.
+    *   `services/`: Contiene la lógica de negocio principal.
+        *   `energy_service.py`: Lógica para procesar, comparar y analizar las curvas de energía.
+        *   `chat_service.py`: Abstrae la comunicación con la API de Gemini.
+    *   `data/`: Todo lo relacionado con la persistencia.
+        *   `database.py`: Configuración de la sesión de SQLAlchemy.
+        *   `models.py`: Define la estructura de las tablas de la base de datos.
+        *   `repositories.py`: Implementa el patrón Repositorio para un acceso a datos más limpio.
+
+**Diapositiva 7: Explorando el Código: Estructura del Frontend**
+*   **Título:** ¿Dónde está qué? (Frontend)
+*   **Directorio Raíz:** `/frontend/src/`
+    *   `main.tsx`: Punto de entrada de React. Renderiza el componente principal `App`.
+    *   `App.tsx`: Componente raíz que contiene la estructura principal de la UI, incluyendo el dashboard.
+    *   `components/`: Componentes reutilizables.
+        *   `EnergyDashboard.tsx`: El panel principal con los controles y la gráfica.
+        *   `EnergyChatbot.tsx`: El área que muestra los resultados del análisis de la IA.
+    *   `services/api.ts`: Centraliza la lógica de comunicación con el backend. Todas las llamadas `fetch` o `axios` deben ir aquí.
+
+**Diapositiva 8: Patrón de Diseño Clave: Observer**
+*   **Título:** The Observer Pattern
+*   **Propósito:** Desacoplar acciones secundarias de la lógica principal. Lo usamos para auditoría y un sistema de notificaciones flexible.
+*   **Implementación:**
+    *   `services/energy_service.py` actúa como el "Subject". Cuando ocurre un evento importante (ej. "análisis crítico"), notifica a sus observadores.
+    *   `services/observers.py` contiene los "Observers" (ej. `LoggingObserver`, `CriticalAlertObserver`).
+*   **¿Cómo extenderlo?:** Para añadir una nueva acción (ej. enviar un email en caso de alerta), solo tienes que crear un nuevo observador en `observers.py` e instanciarlo donde se crea el `EnergyService`.
+
+**Diapositiva 9: Configuración del Entorno Local**
+*   **Título:** Manos a la obra: Tu entorno de desarrollo
+*   **Requisitos Previos:** `Python 3.10+`, `Node.js 20+`, `PostgreSQL` (corriendo en `localhost:54321`).
+*   **Backend (Terminal 1):**
+    1. `cd backend`
+    2. `python -m venv .venv`
+    3. `source .venv/bin/activate` (o `.\.venv\Scripts\activate` en Win)
+    4. `pip install -r requirements.txt`
+    5. Crea `.env` a partir de `.env.example` y rellena `DATABASE_URL`.
+    6. `python -m app.main`
+*   **Frontend (Terminal 2):**
+    1. `cd frontend`
+    2. `npm install`
+    3. `npm run dev`
+*   **Acceso:** Abre tu navegador en `http://localhost:3000`.
+
+**Diapositiva 10: Flujo de Trabajo y Git**
+*   **Título:** Cómo contribuimos
+*   **Ramas (Branches):**
+    *   `main`: Rama principal. Siempre debe estar estable y desplegable.
+    *   `develop`: Rama de integración. Aquí se mezclan las nuevas características.
+    *   Crea tus ramas a partir de `develop`:
+        *   `feature/<nombre-feature>` (ej. `feature/export-to-pdf`)
+        *   `bugfix/<nombre-bug>` (ej. `bugfix/fix-chart-tooltip`)
+*   **Commits:** Usa mensajes de commit convencionales (ej. `feat: Add user authentication endpoint`, `fix: Correct tax calculation`).
+*   **Tests:** Revisa los tests existentes en `backend/test_*.py`. Añade tests para cada nueva funcionalidad o bug corregido.
+*   **Pull Requests (PRs):** Envía los PRs contra la rama `develop` para su revisión.
+
+**Diapositiva 11: Recursos y Próximos Pasos**
+*   **Título:** Documentación y Ayuda
+*   **Tu primera tarea:**
+    *   **Sugerencia 1:** Familiarízate con el flujo de datos. Usa el debugger para seguir una llamada desde `EnergyDashboard.tsx` hasta `energy_service.py` y de vuelta.
+    *   **Sugerencia 2:** Elige un test de `test_anomalies.py`, entiéndelo y ejecútalo.
+    *   **Sugerencia 3:** Revisa los `TODO:` en el código para encontrar tareas pequeñas pendientes.
+*   **Enlaces Útiles:**
+    *   [Documentación de FastAPI](https://fastapi.tiangolo.com/)
+    *   [Documentación de React](https://react.dev/)
+    *   [Documentación de SQLAlchemy](https://www.sqlalchemy.org/)
+    *   [Google AI Studio](https://aistudio.google.com/)

@@ -1,0 +1,28 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python backend/start.py"
+
+[[services]]
+name = "energy-app-backend"
+sourcePath = "backend"
+run = "python backend/start.py"
+port = 8000
+
+[[services]]
+name = "energy-app-frontend"
+sourcePath = "frontend"
+run = "npm run build && npm run preview"
+port = 5173
+
+[services.env]
+DATABASE_URL = "postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+GEMINI_API_KEY = "${GEMINI_API_KEY}"
+
+[services.healthcheckPath]
+backend = "/health"
+frontend = "/"
+
+[services.restartPolicy]
+maxRetries = 3

@@ -1,0 +1,50 @@
+### **Presentación de Ventas: Análisis Inteligente de la Demanda**
+
+**Diapositiva 1: Título**
+*   **Título:** Análisis Inteligente de la Demanda
+*   **Subtítulo:** Transforme sus datos en ahorro.
+*   **Tagline:** Detecte sobrecostos y anomalías energéticas antes de que impacten su factura.
+
+**Diapositiva 2: El Problema: Costos que no ves**
+*   **Título:** ¿Sabe dónde se esconde el verdadero costo energético?
+*   **Punto 1:** El consumo fantasma, los fallos en equipos y los hábitos ineficientes no avisan. Se convierten en pérdidas silenciosas que solo aparecen en la factura.
+*   **Punto 2:** El análisis manual de datos es lento, complejo y reactivo. Para cuando detecta un problema, el dinero ya se ha perdido.
+*   **Imagen sugerida:** Un gráfico de barras con una línea de "costo esperado" y una barra mucho más alta de "costo real" con un signo de interrogación encima.
+
+**Diapositiva 3: La Solución: Inteligencia Activa**
+*   **Título:** Le presentamos "Análisis Inteligente de la Demanda"
+*   **Texto:** Una plataforma que convierte datos de consumo en decisiones inteligentes y proactivas. Nuestro sistema vigila su energía 24/7, usando IA para que usted no tenga que hacerlo.
+*   **Declaración clave:** Deje de reaccionar. Comience a anticipar.
+
+**Diapositiva 4: ¿Cómo Funciona? Simple en 3 Pasos**
+*   **Título:** Potencia al alcance de todos
+*   **Paso 1: Conecte sus Datos:** Cargue su historial de consumo (CSV) con un solo clic. Nuestro sistema es compatible con cualquier medidor.
+*   **Paso 2: Configure el Análisis:** Elija el período que desea analizar y deje que nuestra IA compare el consumo real con el comportamiento esperado.
+*   **Paso 3: Reciba Diagnósticos Instantáneos:** Obtenga un resumen claro del estado de su consumo, alertas de anomalías y recomendaciones para actuar.
+*   **Imagen sugerida:** Tres iconos simples representando "Cargar", "Analizar" y "Ver Resultados".
+
+**Diapositiva 5: Característica Clave: Diagnóstico con IA (Potenciado por Google Gemini)**
+*   **Título:** Su propio experto energético virtual
+*   **Texto:** Nuestra plataforma integra la potencia de la IA de Google para "leer" sus curvas de energía. No solo muestra gráficos, sino que le dice qué significan.
+*   **Beneficio:** Reciba diagnósticos en lenguaje natural: "Pico inusual a las 3 AM asociado al sistema de climatización" en lugar de miles de datos en una tabla.
+
+**Diapositiva 6: Característica Clave: Visualización Interactiva de Alto Impacto**
+*   **Título:** Decisiones, no solo datos
+*   **Texto:** Nuestro panel de control le muestra de forma visual e intuitiva la brecha entre el consumo real (lo que pagó) y el consumo esperado (lo que debería haber pagado).
+*   **Beneficio:** Identifique al instante cuándo y dónde se produjeron los desvíos para tomar acciones correctivas inmediatas.
+*   **Imagen sugerida:** Una captura de pantalla del dashboard de la aplicación, destacando el área entre la curva real y la esperada.
+
+**Diapositiva 7: Beneficios Clave para su Negocio**
+*   **Título:** Más que un software, un motor de ahorro.
+*   **Beneficio 1: Reducción de Costos:** Detecte y corrija consumos anómalos, reduciendo su factura eléctrica hasta en un 15%.
+*   **Beneficio 2: Mantenimiento Predictivo:** Anticipe fallos en maquinaria identificando comportamientos eléctricos irregulares antes de que causen paradas costosas.
+*   **Beneficio 3: Optimización Operativa:** Entienda los patrones de consumo de su operación para optimizar turnos, procesos y uso de activos.
+*   **Beneficio 4: Auditorías Simplificadas:** Genere reportes y justifique desviaciones de consumo con datos objetivos y análisis automáticos.
+
+**Diapositiva 8: ¿Listo para tomar el control?**
+*   **Título:** Deje que sus datos trabajen para usted
+*   **Llamada a la acción:** Solicite una demostración personalizada hoy mismo.
+*   **Contacto:**
+    *   [Su Nombre/Nombre de la Empresa]
+    *   [Su Email]
+    *   [Su Sitio Web]
