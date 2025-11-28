@@ -6,4 +6,4 @@ pandas
 python-multipart
 python-dotenv
 pydantic
-google-generativeai
+google-genai
