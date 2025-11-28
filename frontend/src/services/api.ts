@@ -96,8 +96,8 @@ interface AnalyzePayload {
 }
 
 // URL base de tu backend FastAPI - configuración para producción
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-
+// @ts-ignore
+const BASE_URL = (import.meta as any).env.VITE_API_BASE_URL || "http://localhost:8000";
 /**
  * Sube un archivo CSV asociado a un Device ID para carga masiva en la DB.
  */
